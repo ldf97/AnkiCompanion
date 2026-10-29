@@ -1,0 +1,18 @@
+name: Source checks
+on:
+  push:
+  pull_request:
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt -r requirements-server.txt -r requirements-test.txt
+      - name: Test backend and update discovery
+        run: python -m pytest tests/test_server.py tests/test_updates.py -q
+      - name: Check Python syntax
+        run: python -m compileall -q app companion desktop server anki_addon
