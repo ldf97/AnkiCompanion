@@ -8,7 +8,7 @@ destination = root.parent / 'deliverables'
 destination.mkdir(exist_ok=True)
 archive = destination / 'AnkiCompanion-checkpoint.zip'
 temporary = archive.with_suffix('.zip.tmp')
-excluded = {'.git', '.gradle', '.venv', '__pycache__', '.pytest_cache', 'build', 'data', '.signing', 'node_modules', 'dist'}
+excluded = {'.git', '.kotlin', '.gradle', '.venv', '__pycache__', '.pytest_cache', 'build', 'data', '.signing', 'node_modules', 'dist'}
 files = sorted(p for p in root.rglob('*') if p.is_file()
                and not (set(p.relative_to(root).parts) & excluded)
                and p.suffix.lower() not in {'.jks', '.keystore', '.pfx', '.p12', '.key'}

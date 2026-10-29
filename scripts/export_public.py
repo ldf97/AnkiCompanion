@@ -7,8 +7,8 @@ DEST=ROOT.parent/'public-source'
 def export():
     roots=['app','companion','server','desktop','anki_addon','android','fonts','assets','skins/study_companion','tests','scripts','deployment','installer','.github']
     files={p for directory in roots for p in (ROOT/directory).rglob('*') if p.is_file()}
-    files.update(ROOT/p for p in ['VERSION.json','.gitignore','requirements-server.txt','requirements-desktop.txt','requirements-test.txt'])
-    ignored={'build','.gradle','__pycache__','.pytest_cache','local.properties'}
+    files.update(ROOT/p for p in ['VERSION.json','PUBLIC_README.md','.gitignore','requirements-server.txt','requirements-desktop.txt','requirements-test.txt'])
+    ignored={'build','.kotlin','.gradle','__pycache__','.pytest_cache','local.properties'}
     files={p for p in files if not(set(p.relative_to(ROOT).parts)&ignored) and p.suffix not in {'.pyc','.jks','.key','.pfx','.keystore'}}
     files={p for p in files if p.parent!=ROOT/'app' or p.name in {'__init__.py','widget_engine.py','skin_packs.py'}}
     private=ROOT/'skins/eren_anki';phrases=[];private_hashes=set()
