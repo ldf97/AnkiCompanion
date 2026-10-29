@@ -1,0 +1,69 @@
+"""Offline, deterministic release-feed regression tests."""
+import hashlib, json
+from io import BytesIO
+from unittest.mock import patch
+import pytest
+from fastapi.testclient import TestClient
+from server.main import create_app
+from server.updates import ReleaseFeed, UpdateError
+
+REPO='example/anki-companion'
+PAYLOAD=b'fake installer content'
+SHA=hashlib.sha256(PAYLOAD).hexdigest()
+ASSET='AnkiCompanion-win.zip'
+
+def fixture_feed(tmp_path, *, corrupt=False, bad_tag=False, wrong_size=False, missing_manifest=False):
+    manifest={'schema_version':1,'version':'1.2.3','build':12,'commit':'a'*40,
+              'assets':{'windows':{'filename':ASSET,'size':len(PAYLOAD)+(1 if wrong_size else 0),'sha256':('0'*64 if corrupt else SHA)}}}
+    release={'tag_name':'v9.9.9' if bad_tag else 'v1.2.3','draft':False,'prerelease':False,
+             'body':'Notes','html_url':'https://github.com/example/anki-companion/releases/tag/v1.2.3',
+             'assets':[{'name':ASSET,'id':42,'size':len(PAYLOAD)},
+                       *([] if missing_manifest else [{'name':'update.json','id':41,'size':100}])]}
+    def fetch(url,accept='application/vnd.github+json'):
+        if url.endswith('/releases/latest'):return json.dumps(release).encode()
+        if url.endswith('/releases/assets/41'):return json.dumps(manifest).encode()
+        raise AssertionError('Unexpected network request '+url)
+    return ReleaseFeed(tmp_path,fetch=fetch)
+
+def test_update_discovery_and_cache(tmp_path):
+    feed=fixture_feed(tmp_path)
+    assert feed.check(REPO,'windows','1.0.0')['available'] is True
+    assert feed.check(REPO,'windows','1.2.3')['available'] is False
+    assert feed.check(REPO,'android','1.0.0')['available'] is False
+    assert feed.check('', 'windows','1.0.0')['configured'] is False
+    assert feed.check(REPO,'windows','1.0.0')['download_path']=='/v1/updates/download/42'
+
+def test_invalid_release_metadata(tmp_path):
+    for kwargs in ({'bad_tag':True},{'wrong_size':True},{'missing_manifest':True}):
+        with pytest.raises(UpdateError):fixture_feed(tmp_path,**kwargs).release(REPO)
+    with pytest.raises(UpdateError):fixture_feed(tmp_path).release('bad repo')
+
+def test_checksum_validation_and_no_partial_file(tmp_path):
+    feed=fixture_feed(tmp_path);feed.release(REPO)
+    class Response(BytesIO):
+        def __enter__(self):return self
+        def __exit__(self,*args):self.close()
+    class Opener:
+        def open(self,*args,**kwargs):return Response(PAYLOAD)
+    with patch('server.updates.urllib.request.build_opener',return_value=Opener()):
+        path,name=feed.download(REPO,'42')
+    assert name==ASSET and path.read_bytes()==PAYLOAD
+    assert not list(tmp_path.glob('*.partial'))
+    bad=fixture_feed(tmp_path/'bad',corrupt=True);bad.release(REPO)
+    with patch('server.updates.urllib.request.build_opener',return_value=Opener()):
+        with pytest.raises(UpdateError,match='checksum'):bad.download(REPO,'42')
+    assert not list((tmp_path/'bad').glob('*.partial'))
+
+def test_update_endpoint_requires_auth(tmp_path,monkeypatch):
+    monkeypatch.setenv('ANKI_COMPANION_REPOSITORY',REPO)
+    app=create_app(tmp_path/'api','a-very-long-test-token')
+    app.state.feed=fixture_feed(tmp_path/'feed')
+    # Endpoints close over the original feed, so replace its fetch rather than its reference.
+    original=app.state.feed
+    app_feed=next(c.cell_contents for c in app.router.routes if getattr(c,'path',None)=='/v1/updates/{platform}' for c in (c.endpoint.__closure__ or []) if isinstance(c.cell_contents,ReleaseFeed))
+    app_feed.fetch=original.fetch
+    with TestClient(app) as client:
+        assert client.get('/v1/updates/windows?current=1.0.0').status_code==401
+        headers={'Authorization':'Bearer a-very-long-test-token'}
+        assert client.get('/v1/updates/windows?current=1.0.0',headers=headers).json()['available'] is True
+        assert client.get('/v1/updates/unknown',headers=headers).status_code==404

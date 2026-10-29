@@ -1,0 +1,290 @@
+{
+  "skin": {
+    "schema_version": 1,
+    "id": "study_companion",
+    "name": "Study Companion",
+    "version": "1.0.0",
+    "canvas": {
+      "width": 1100,
+      "height": 468
+    },
+    "background_pools": {},
+    "time_slots": [
+      {
+        "id": "friendly",
+        "start_minute": 0,
+        "end_minute": 600,
+        "portraits": [
+          "scene.png"
+        ],
+        "quotes": [
+          {
+            "text": "One answer at a time.",
+            "source": "AnkiCompanion"
+          }
+        ],
+        "background": {
+          "mode": "fixed",
+          "asset": "scene.png"
+        },
+        "tint": false
+      },
+      {
+        "id": "pensive",
+        "start_minute": 600,
+        "end_minute": 900,
+        "portraits": [
+          "scene.png"
+        ],
+        "quotes": [
+          {
+            "text": "One answer at a time.",
+            "source": "AnkiCompanion"
+          }
+        ],
+        "background": {
+          "mode": "fixed",
+          "asset": "scene.png"
+        },
+        "tint": true
+      },
+      {
+        "id": "threatening",
+        "start_minute": 900,
+        "end_minute": 1080,
+        "portraits": [
+          "scene.png"
+        ],
+        "quotes": [
+          {
+            "text": "One answer at a time.",
+            "source": "AnkiCompanion"
+          }
+        ],
+        "background": {
+          "mode": "fixed",
+          "asset": "scene.png"
+        },
+        "tint": true
+      },
+      {
+        "id": "evening",
+        "start_minute": 1080,
+        "end_minute": 1260,
+        "portraits": [
+          "scene.png"
+        ],
+        "quotes": [
+          {
+            "text": "One answer at a time.",
+            "source": "AnkiCompanion"
+          }
+        ],
+        "background": {
+          "mode": "fixed",
+          "asset": "scene.png"
+        },
+        "tint": true
+      },
+      {
+        "id": "rumbling",
+        "start_minute": 1260,
+        "end_minute": 1440,
+        "portraits": [
+          "scene.png"
+        ],
+        "quotes": [
+          {
+            "text": "One answer at a time.",
+            "source": "AnkiCompanion"
+          }
+        ],
+        "background": {
+          "mode": "fixed",
+          "asset": "scene.png"
+        },
+        "tint": false
+      }
+    ],
+    "completion": {
+      "id": "freedom",
+      "portraits": [
+        "scene.png"
+      ],
+      "quotes": [
+        {
+          "text": "Daily lesson complete.",
+          "source": "AnkiCompanion"
+        }
+      ],
+      "background": {
+        "mode": "none"
+      }
+    },
+    "style": {
+      "max_red_tint": 0.45,
+      "red_tint_start_minute": 600,
+      "red_tint_end_minute": 1259,
+      "red_tint_rgb": [
+        200,
+        0,
+        0
+      ],
+      "warning_start_minute": 1080,
+      "warning_pulse_min_scale": 1.0,
+      "warning_pulse_max_scale": 1.25,
+      "warning_pulse_duration_ms": 1800,
+      "warning_badge_position": [
+        95,
+        35
+      ],
+      "streak_label": "day streak",
+      "icons": {
+        "flame_lit": "icons/streak_flame_lit.svg",
+        "flame_unlit": "icons/streak_flame_unlit.svg",
+        "warning_badge": "icons/streak_warning_badge.svg"
+      }
+    }
+  },
+  "seed": "public-fixture",
+  "vectors": [
+    {
+      "date": "2026-10-29",
+      "lineup": {
+        "date": "2026-10-29",
+        "skin_id": "study_companion",
+        "skin_version": "1.0.0",
+        "records": {
+          "friendly": {
+            "portrait": "scene.png",
+            "quote": "One answer at a time.",
+            "episode": "AnkiCompanion",
+            "background": "scene.png"
+          },
+          "pensive": {
+            "portrait": "scene.png",
+            "quote": "One answer at a time.",
+            "episode": "AnkiCompanion",
+            "background": "scene.png"
+          },
+          "threatening": {
+            "portrait": "scene.png",
+            "quote": "One answer at a time.",
+            "episode": "AnkiCompanion",
+            "background": "scene.png"
+          },
+          "evening": {
+            "portrait": "scene.png",
+            "quote": "One answer at a time.",
+            "episode": "AnkiCompanion",
+            "background": "scene.png"
+          },
+          "rumbling": {
+            "portrait": "scene.png",
+            "quote": "One answer at a time.",
+            "episode": "AnkiCompanion",
+            "background": "scene.png"
+          },
+          "freedom": {
+            "portrait": "scene.png",
+            "quote": "Daily lesson complete.",
+            "episode": "AnkiCompanion",
+            "background": null
+          }
+        }
+      }
+    },
+    {
+      "date": "2026-10-30",
+      "lineup": {
+        "date": "2026-10-30",
+        "skin_id": "study_companion",
+        "skin_version": "1.0.0",
+        "records": {
+          "friendly": {
+            "portrait": "scene.png",
+            "quote": "One answer at a time.",
+            "episode": "AnkiCompanion",
+            "background": "scene.png"
+          },
+          "pensive": {
+            "portrait": "scene.png",
+            "quote": "One answer at a time.",
+            "episode": "AnkiCompanion",
+            "background": "scene.png"
+          },
+          "threatening": {
+            "portrait": "scene.png",
+            "quote": "One answer at a time.",
+            "episode": "AnkiCompanion",
+            "background": "scene.png"
+          },
+          "evening": {
+            "portrait": "scene.png",
+            "quote": "One answer at a time.",
+            "episode": "AnkiCompanion",
+            "background": "scene.png"
+          },
+          "rumbling": {
+            "portrait": "scene.png",
+            "quote": "One answer at a time.",
+            "episode": "AnkiCompanion",
+            "background": "scene.png"
+          },
+          "freedom": {
+            "portrait": "scene.png",
+            "quote": "Daily lesson complete.",
+            "episode": "AnkiCompanion",
+            "background": null
+          }
+        }
+      }
+    },
+    {
+      "date": "2026-11-01",
+      "lineup": {
+        "date": "2026-11-01",
+        "skin_id": "study_companion",
+        "skin_version": "1.0.0",
+        "records": {
+          "friendly": {
+            "portrait": "scene.png",
+            "quote": "One answer at a time.",
+            "episode": "AnkiCompanion",
+            "background": "scene.png"
+          },
+          "pensive": {
+            "portrait": "scene.png",
+            "quote": "One answer at a time.",
+            "episode": "AnkiCompanion",
+            "background": "scene.png"
+          },
+          "threatening": {
+            "portrait": "scene.png",
+            "quote": "One answer at a time.",
+            "episode": "AnkiCompanion",
+            "background": "scene.png"
+          },
+          "evening": {
+            "portrait": "scene.png",
+            "quote": "One answer at a time.",
+            "episode": "AnkiCompanion",
+            "background": "scene.png"
+          },
+          "rumbling": {
+            "portrait": "scene.png",
+            "quote": "One answer at a time.",
+            "episode": "AnkiCompanion",
+            "background": "scene.png"
+          },
+          "freedom": {
+            "portrait": "scene.png",
+            "quote": "Daily lesson complete.",
+            "episode": "AnkiCompanion",
+            "background": null
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_root" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:background="#121418" android:padding="3dp">
+ <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+  <ImageView android:id="@+id/widget_image" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitCenter" android:contentDescription="Anki streak and daily character scene"/>
+  <ViewFlipper android:id="@+id/widget_warning" android:layout_width="match_parent" android:layout_height="match_parent" android:autoStart="true" android:flipInterval="225" android:visibility="gone">
+   <ImageView android:id="@+id/warning_0" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitCenter" android:contentDescription="Daily lesson warning"/>
+   <ImageView android:id="@+id/warning_1" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitCenter" android:contentDescription="Daily lesson warning"/>
+   <ImageView android:id="@+id/warning_2" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitCenter" android:contentDescription="Daily lesson warning"/>
+   <ImageView android:id="@+id/warning_3" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitCenter" android:contentDescription="Daily lesson warning"/>
+   <ImageView android:id="@+id/warning_4" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitCenter" android:contentDescription="Daily lesson warning"/>
+   <ImageView android:id="@+id/warning_5" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitCenter" android:contentDescription="Daily lesson warning"/>
+   <ImageView android:id="@+id/warning_6" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitCenter" android:contentDescription="Daily lesson warning"/>
+   <ImageView android:id="@+id/warning_7" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitCenter" android:contentDescription="Daily lesson warning"/>
+  </ViewFlipper>
+ </FrameLayout>
+ <TextView android:id="@+id/widget_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Open Anki Companion to connect" android:textSize="10sp" android:textColor="#E9DCCB" android:maxLines="2"/>
+</LinearLayout>

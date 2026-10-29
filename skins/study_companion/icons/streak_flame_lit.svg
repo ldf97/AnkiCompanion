@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 80" width="72" height="80">
+ <title>Lit streak flame</title>
+ <defs><linearGradient id="heat" x1="0" y1="0" x2="0.78" y2="1"><stop offset="0" stop-color="#FFDE78"/><stop offset=".43" stop-color="#FF9D28"/><stop offset="1" stop-color="#F95429"/></linearGradient>
+ <linearGradient id="core" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#FFF5B2"/><stop offset="1" stop-color="#FFE16A"/></linearGradient></defs>
+ <path d="M 38.2,5.5 C 39.8,16 47.8,22.6 48.4,35.5 C 52.8,31.8 54.9,26.7 54,21.4 C 63.6,33.7 67,43.9 65,54.2 C 62.6,67.3 52.3,74.5 36,74.5 C 19.8,74.5 9,66.9 7.2,54 C 5.7,43 11.7,32.4 20.1,24 C 20.7,34.8 24.4,40.9 29.4,43.7 C 33.3,34.2 35.8,22 38.2,5.5 Z" fill="url(#heat)" stroke="#FFB75C" stroke-width="1.35" stroke-linejoin="round"/>
+ <path d="M 36.6,44.5 C 39.5,50 45.3,54 44,59.5 C 42.7,65.5 39.6,68 35.8,68 C 29,68 25.2,64 26.1,58.3 C 26.7,53.9 29.4,51.2 32,48 C 31.8,52.8 33.3,55.9 35.1,57.2 C 37.3,53.9 36.1,49.4 36.6,44.5 Z" fill="url(#core)" stroke="#FFE893" stroke-width="1" stroke-linejoin="round"/>
+</svg>
