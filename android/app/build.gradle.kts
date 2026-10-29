@@ -6,6 +6,7 @@ android {
         applicationId = "org.ankicompanion.app"
         minSdk = 26
         targetSdk = 35
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = providers.environmentVariable("APP_VERSION_CODE").orElse("1").get().toInt()
         versionName = providers.environmentVariable("APP_VERSION_NAME").orElse("0.1.0").get()
     }
@@ -34,6 +35,9 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("com.caverock:androidsvg-aar:1.4")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }

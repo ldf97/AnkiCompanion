@@ -1,6 +1,6 @@
 """GitHub release feed, with private-repository credentials kept on the server."""
 from pathlib import Path
-import hashlib, json, os, re, time, urllib.request, urllib.parse, threading
+import hashlib, json, os, re, time, urllib.request, urllib.parse, urllib.error, threading
 
 class UpdateError(ValueError): pass
 
@@ -54,6 +54,7 @@ class ReleaseFeed:
                 filename=item.get('filename','')
                 if platform not in ('android','windows','source'):raise UpdateError('Unsupported update platform')
                 if not re.fullmatch(r'[A-Za-z0-9_.-]+\.(apk|exe|zip)',filename):raise UpdateError('Invalid release filename')
+                if not filename.endswith({'android':'.apk','windows':'.exe','source':'.zip'}[platform]):raise UpdateError('Wrong package type for platform')
                 if not re.fullmatch(r'[a-f0-9]{64}',item.get('sha256','')):raise UpdateError('Invalid release checksum')
                 asset=assets.get(filename)
                 if not asset or asset.get('size')!=item.get('size') or not 0<item['size']<=500*1024*1024:raise UpdateError('Release asset size mismatch')
@@ -66,7 +67,10 @@ class ReleaseFeed:
             return result
     def check(self,repository,platform,current,build=0,force=False):
         if not repository:return dict(configured=False,available=False,message='GitHub release source is not configured yet')
-        release=self.release(repository,force)
+        try:release=self.release(repository,force)
+        except urllib.error.HTTPError as exc:
+            if exc.code==404:return dict(configured=True,available=False,message='No approved stable release has been published yet')
+            raise
         item=release['assets'].get(platform)
         if not item:return dict(configured=True,available=False,message='This release has no package for '+platform)
         newer=release['build']>build if platform=='android' else version_tuple(release['version'])>version_tuple(current)

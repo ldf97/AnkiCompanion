@@ -18,11 +18,20 @@ class CompanionWidget:AppWidgetProvider() {
         fun refresh(context:Context) {
             val manager=AppWidgetManager.getInstance(context);val ids=manager.getAppWidgetIds(ComponentName(context,CompanionWidget::class.java))
             if(ids.isEmpty())return
-            val store=Storage(context);val state=store.load("state.json")
+            val state=Storage(context).load("state.json")
+            try {manager.updateAppWidget(ids,buildViews(context,state))}
+            catch(e:Exception) {
+                val fallback=RemoteViews(context.packageName,R.layout.widget)
+                fallback.setTextViewText(R.id.widget_status,"Open app to finish connecting")
+                manager.updateAppWidget(ids,fallback)
+            }
+        }
+        fun buildViews(context:Context,state:org.json.JSONObject?):RemoteViews {
+            val store=Storage(context)
             val views=RemoteViews(context.packageName,R.layout.widget)
             val intent=Intent(context,MainActivity::class.java).putExtra("study",true)
             views.setOnClickPendingIntent(R.id.widget_root,PendingIntent.getActivity(context,10,intent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
-            if(state!=null)try {
+            if(state!=null) {
                 val local=Outbox(context).use{it.overlay(state)};val lineup=state.getJSONObject("lineup")
                 val frame=Renderer(context).draw(local,Skins(context).directory(lineup.getString("skin_id"),lineup.getString("skin_version")),false)
                 val bitmap=Bitmap.createScaledBitmap(frame.image,650,277,true);views.setImageViewBitmap(R.id.widget_image,bitmap)
@@ -43,9 +52,9 @@ class CompanionWidget:AppWidgetProvider() {
                 val stale=System.currentTimeMillis()-state.getLong("server_time_ms")>120000
                 val update=store.load("update.json")?.optBoolean("available")==true
                 views.setTextViewText(R.id.widget_status,label+if(update)" · Update available" else if(stale)" · Cached" else " · Tap to study")
-                manager.updateAppWidget(ids,views);frame.image.recycle();frame.badge.recycle();bitmap.recycle()
-            } catch(e:Exception){views.setTextViewText(R.id.widget_status,"Open app to finish connecting");manager.updateAppWidget(ids,views)}
-            else manager.updateAppWidget(ids,views)
+                frame.image.recycle();frame.badge.recycle()
+            }
+            return views
         }
     }
 }

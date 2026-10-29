@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt
 from desktop.app import Window,streak_tray_icon,STYLE
 from server.main import create_app
 from fastapi.testclient import TestClient
+(root/'test-results').mkdir(exist_ok=True)
 app=QApplication([]);app.setStyleSheet(STYLE);app.setQuitOnLastWindowClosed(False)
 sheet=QPixmap(760,410);sheet.fill(QColor('#202329'));paint=QPainter(sheet);paint.setPen(QColor('white'))
 for row,(streak,done) in enumerate([(0,False),(72,False),(1234,True)]):

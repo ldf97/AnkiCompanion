@@ -1,0 +1,108 @@
+name: Prepare signed release candidate
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Numeric version, for example 0.2.0
+        required: true
+        type: string
+      build:
+        description: Android build number greater than every prior release
+        required: true
+        type: number
+permissions:
+  contents: read
+jobs:
+  android:
+    if: github.ref == 'refs/heads/main'
+    environment: signing
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build with persistent release key
+        working-directory: android
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          APP_VERSION_NAME: ${{ inputs.version }}
+          APP_VERSION_CODE: ${{ inputs.build }}
+        run: |
+          test -n "$KEYSTORE_BASE64"
+          export ANDROID_KEYSTORE="$RUNNER_TEMP/release.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE"
+          trap 'rm -f "$ANDROID_KEYSTORE"' EXIT
+          bash gradlew --no-daemon testReleaseUnitTest lintRelease assembleRelease
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
+          mkdir -p ../candidate
+          cp app/build/outputs/apk/release/app-release.apk ../candidate/AnkiCompanion-Android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-android
+          path: candidate/
+  windows:
+    if: github.ref == 'refs/heads/main'
+    environment: signing
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-desktop.txt pyinstaller
+      - name: Build and sign installer
+        shell: pwsh
+        env:
+          PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_BUILD: ${{ inputs.build }}
+        run: |
+          $ErrorActionPreference='Stop'
+          if (-not $env:PFX_BASE64) { throw 'Persistent Windows signing certificate is required' }
+          $path=Join-Path $env:RUNNER_TEMP publisher.pfx
+          [IO.File]::WriteAllBytes($path,[Convert]::FromBase64String($env:PFX_BASE64))
+          try {
+            $password=ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
+            $cert=Get-PfxCertificate -FilePath $path -Password $password
+            @{version=$env:RELEASE_VERSION;build=[int]$env:RELEASE_BUILD;commit=$env:GITHUB_SHA;windows_signer_thumbprint=$cert.Thumbprint} | ConvertTo-Json | Set-Content VERSION.json -Encoding utf8NoBOM
+            ./scripts/build_windows.ps1
+            $result=Set-AuthenticodeSignature -FilePath packages/AnkiCompanion-Windows-Setup.exe -Certificate $cert -HashAlgorithm SHA256 -TimestampServer http://timestamp.digicert.com
+            if ($result.Status -ne 'Valid') { throw "Signature is not trusted: $($result.Status)" }
+          } finally { Remove-Item $path -ErrorAction SilentlyContinue }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-windows
+          path: packages/AnkiCompanion-Windows-Setup.exe
+  assemble:
+    needs: [android, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: signed-*
+          merge-multiple: true
+          path: candidate
+      - name: Hash exact candidate files
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_BUILD: ${{ inputs.build }}
+        run: |
+          git archive --format=zip --output=candidate/AnkiCompanion-source.zip HEAD
+          python scripts/release_manifest.py --directory candidate --version "$RELEASE_VERSION" --build "$RELEASE_BUILD" --commit "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-release-candidate
+          path: candidate/
+      # Intentionally no publication step. Production release requires separate
+      # explicit owner authorization after device acceptance and review.

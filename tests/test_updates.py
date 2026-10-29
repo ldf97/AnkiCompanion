@@ -10,7 +10,7 @@ from server.updates import ReleaseFeed, UpdateError
 REPO='example/anki-companion'
 PAYLOAD=b'fake installer content'
 SHA=hashlib.sha256(PAYLOAD).hexdigest()
-ASSET='AnkiCompanion-win.zip'
+ASSET='AnkiCompanion-win.exe'
 
 def fixture_feed(tmp_path, *, corrupt=False, bad_tag=False, wrong_size=False, missing_manifest=False):
     manifest={'schema_version':1,'version':'1.2.3','build':12,'commit':'a'*40,
@@ -67,3 +67,18 @@ def test_update_endpoint_requires_auth(tmp_path,monkeypatch):
         headers={'Authorization':'Bearer a-very-long-test-token'}
         assert client.get('/v1/updates/windows?current=1.0.0',headers=headers).json()['available'] is True
         assert client.get('/v1/updates/unknown',headers=headers).status_code==404
+
+
+def test_windows_installer_publisher_is_pinned():
+    from companion.updates import validate_windows_signature
+    thumb='A'*40
+    validate_windows_signature({'status':'Valid','thumbprint':thumb},thumb)
+    for signature,pinned in [({'status':'NotSigned','thumbprint':thumb},thumb),({'status':'Valid','thumbprint':'B'*40},thumb),({'status':'Valid','thumbprint':thumb},'')]:
+        with pytest.raises(ValueError):validate_windows_signature(signature,pinned)
+
+
+def test_no_releases_is_not_a_connection_failure(tmp_path):
+    from urllib.error import HTTPError
+    def missing(*args):raise HTTPError('https://api.github.com/repos/example/repo/releases/latest',404,'Not found',{},None)
+    result=ReleaseFeed(tmp_path,fetch=missing).check(REPO,'windows','0.1.1')
+    assert result['configured'] and not result['available'] and 'approved' in result['message']
