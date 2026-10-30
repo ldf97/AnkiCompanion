@@ -112,8 +112,8 @@ class MainActivity:Activity() {
         }.show()
     }
     private fun requestAnki() {
-        try{packageManager.getPackageInfo("com.ichi2.anki",0);requestPermissions(arrayOf(AnkiBridge.PERMISSION),2)}
-        catch(e:Exception){status.text="Install AnkiDroid, then grant access here."}
+        try{requestPermissions(arrayOf(AnkiBridge.permission(this)),2)}
+        catch(e:Exception){status.text="Install AnkiDroid Companion, then grant access here."}
     }
     private fun saveDeck() {
         val current=state ?: return;val selected=decks.getOrNull(parent.selectedItemPosition) ?: return
@@ -126,6 +126,7 @@ class MainActivity:Activity() {
         val s=current.getJSONObject("settings")
         async({
             AnkiBridge.configure(applicationContext,s)
+            AnkiBridge.synchronize(applicationContext)
             Rules.next(AnkiBridge.decks(applicationContext),s.getString("parent_deck_id"),s.getString("clearance"))
         }){result->
             val deck=result as? JSONObject

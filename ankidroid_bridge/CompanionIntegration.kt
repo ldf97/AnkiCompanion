@@ -40,10 +40,11 @@ object CompanionIntegration {
 
     fun configure(context: Context, options: Bundle): Bundle {
         initialize(context)
+        val wasEnabled = enabled()
         prefs().edit().putBoolean("enabled", options.getBoolean("enabled", true))
             .putString("parent_deck_id", options.getString("parent_deck_id", ""))
             .putString("clearance", options.getString("clearance", "new_and_reviews")).apply()
-        requestSync()
+        if (!wasEnabled && enabled()) requestSync()
         return status()
     }
 
@@ -57,8 +58,9 @@ object CompanionIntegration {
     }
 
     fun requestSync(): Bundle {
-        if (enabled() && queued.compareAndSet(false, true)) scope.launch {
-            try { synchronize() } finally { queued.set(false) }
+        if (enabled() && queued.compareAndSet(false, true)) {
+            prefs().edit().putString("sync_status", "syncing").apply()
+            scope.launch { try { synchronize() } finally { queued.set(false) } }
         }
         return status()
     }
@@ -94,6 +96,15 @@ object CompanionIntegration {
         }
     }
 
+    suspend fun isCurrent(card: com.ichi2.anki.libanki.Card): Boolean {
+        if (!enabled()) return true
+        synchronize()
+        return withCol {
+            val latest = getCard(card.id)
+            latest.reps == card.reps && latest.mod == card.mod && latest.queue == card.queue && latest.due == card.due
+        }
+    }
+
     suspend fun beforeReview() {
         if (!enabled()) return
         changed()
@@ -122,8 +133,12 @@ object CompanionIntegration {
         val limit = (uri.getQueryParameter("limit")?.toIntOrNull() ?: 1000).coerceIn(1, 1000)
         withCol {
             val result = MatrixCursor(arrayOf("id", "cid", "time"))
-            db.query("SELECT id,cid,time FROM revlog WHERE id>=? AND ease>0 ORDER BY id LIMIT ?", since, limit).use { cursor ->
-                while (cursor.moveToNext()) result.addRow(arrayOf(cursor.getLong(0), cursor.getLong(1), cursor.getInt(2)))
+            val ids = uri.getQueryParameter("ids")?.split(",")?.map { it.toLong() }
+            require(ids == null || ids.size in 1..300)
+            val cursor = if (ids == null) db.query("SELECT id,cid,time FROM revlog WHERE id>=? AND ease>0 ORDER BY id LIMIT ?", since, limit)
+                else db.query("SELECT id,cid,time FROM revlog WHERE ease>0 AND id IN (" + ids.joinToString(",") { "?" } + ")", *ids.toTypedArray())
+            cursor.use {
+                while (it.moveToNext()) result.addRow(arrayOf<Any>(it.getLong(0), it.getLong(1), it.getInt(2)))
             }
             result
         }

@@ -29,13 +29,19 @@ object Sync {
         try {
             val api=Api(config);val outbox=Outbox(context)
             try {
-                if(AnkiBridge.experimental(context)){outbox.scan(context,store);store.setSetting("bridge_status","Experimental bridge; collection sync unverified")}
+                val capability=AnkiBridge.capabilities(context)
+                if(capability!=null){
+                    val generation=capability.getLong("generation").toString()
+                    if(store.getSetting("native_generation")!=generation){store.setSetting("history_cursor",(System.currentTimeMillis()-370L*86400000).toString());store.setSetting("native_generation",generation)}
+                    outbox.scan(context,store)
+                    store.setSetting("bridge_status","AnkiDroid Companion · "+capability.getString("sync_status"))
+                }
                 else store.setSetting("bridge_status","Stock AnkiDroid: review totals arrive through desktop after native collection sync. Live cross-device review sync is not verified.")
             }
             catch(e:Exception){store.setSetting("bridge_status","AnkiDroid review-history bridge unavailable; desktop reports phone reviews after collection sync")}
             try {
                 outbox.send(api,store.deviceId)
-                if(AnkiBridge.permitted(context))api.json("/v1/snapshots","POST",JSONObject().put("device_id",store.deviceId).put("label","Android phone").put("decks",JSONArray(AnkiBridge.decks(context))))
+                if(AnkiBridge.permitted(context))api.json("/v1/snapshots","POST",JSONObject().put("device_id",store.deviceId).put("label","Android phone").put("decks",JSONArray(AnkiBridge.decks(context))).put("sync_status",AnkiBridge.capabilities(context)?.getString("sync_status") ?: "Bridge unavailable").put("collection_synced_ms",AnkiBridge.capabilities(context)?.getLong("synced_ms") ?: 0))
                 val state=api.json("/v1/state");val lineup=state.getJSONObject("lineup")
                 Skins(context).ensure(api,lineup.getString("skin_id"),lineup.getString("skin_version"))
                 store.save("commands.json",api.json("/v1/commands/"+store.deviceId));

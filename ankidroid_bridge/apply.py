@@ -23,6 +23,12 @@ def apply(root):
     edit(base+'AnkiActivity.kt','        customTabActivityHelper.unbindCustomTabsService(this)','        CompanionIntegration.requestSync()\n        customTabActivityHelper.unbindCustomTabsService(this)')
     vm=base+'ui/windows/reviewer/ReviewerViewModel.kt'
     edit(vm,'        Timber.v("ReviewerViewModel::updateCurrentCard")','        Timber.v("ReviewerViewModel::updateCurrentCard")\n        com.ichi2.anki.CompanionIntegration.beforeReview()')
+    edit(vm,'        val state = queueState.await() ?: return\n        val card = currentCard.await()','''        val state = queueState.await() ?: return
+        val card = currentCard.await()
+        if (!com.ichi2.anki.CompanionIntegration.isCurrent(card)) {
+            updateCurrentCard()
+            return
+        }''')
     edit(vm,'        actionFeedbackFlow.emit(tryUndo())','        actionFeedbackFlow.emit(tryUndo())\n        com.ichi2.anki.CompanionIntegration.changed()\n        com.ichi2.anki.CompanionIntegration.requestSync()')
     edit(vm,'        actionFeedbackFlow.emit(tryRedo())','        actionFeedbackFlow.emit(tryRedo())\n        com.ichi2.anki.CompanionIntegration.changed()\n        com.ichi2.anki.CompanionIntegration.requestSync()')
     provider=base+'provider/CardContentProvider.kt'
