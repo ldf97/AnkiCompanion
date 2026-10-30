@@ -22,6 +22,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.net.HttpURLConnection
 import java.net.URL
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.WebView
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Real AnkiDroid UI ratings and native collection sync against a disposable local server. */
 @RunWith(AndroidJUnit4::class)
@@ -38,6 +44,22 @@ class CompanionAcceptanceTest : InstrumentedTest() {
         while(System.currentTimeMillis()<deadline){if(condition())return;Thread.sleep(250)}
         error(message)
     }
+    private fun questionRendered(scenario:ActivityScenario<CardViewerActivity>):Boolean {
+        fun findWeb(view:View):WebView? {
+            if(view is WebView)return view
+            if(view is ViewGroup)for(i in 0 until view.childCount)findWeb(view.getChildAt(i))?.let{return it}
+            return null
+        }
+        val ready=AtomicBoolean(false);val done=CountDownLatch(1)
+        scenario.onActivity { activity ->
+            val web=findWeb(activity.window.decorView)
+            if(web==null)done.countDown()
+            else web.evaluateJavascript("document.readyState === 'complete' && document.body.innerText.includes('Acceptance card ')") {
+                ready.set(it=="true");done.countDown()
+            }
+        }
+        return done.await(3,TimeUnit.SECONDS) && ready.get()
+    }
     @Test fun desktop20Phone10Desktop20() = runBlocking {
         val auth=withCol{syncLogin("fixture","temporary-test-password","http://10.0.2.2:8767/")}
         Prefs.hkey=auth.hkey;Prefs.currentSyncUri="http://10.0.2.2:8767/";Prefs.isNewStudyScreenEnabled=true
@@ -49,8 +71,14 @@ class CompanionAcceptanceTest : InstrumentedTest() {
         control("/test/phone-ready",JSONObject())
         awaitCondition("Companion observer did not start"){control("/test/status").optBoolean("observer_ready")}
         awaitCondition("Desktop's first 20 answers were not produced"){control("/test/status").getInt("phase")==20}
-        ActivityScenario.launch<CardViewerActivity>(ReviewerFragment.getIntent(testContext)).use {
+        ActivityScenario.launch<CardViewerActivity>(ReviewerFragment.getIntent(testContext)).use { scenario ->
+            awaitCondition("First desktop reviews were not imported automatically"){
+                runBlocking{withCol{db.queryScalar("SELECT COUNT(*) FROM revlog WHERE ease>0")}}==20
+            }
             repeat(10){index->
+                // Read the visible card before pressing Show Answer. Button
+                // presence alone does not prove the initial WebView has loaded.
+                awaitCondition("Question did not finish rendering"){questionRendered(scenario)}
                 onView(withId(R.id.show_answer_button)).checkWithTimeout(matches(isDisplayed()),100,30000)
                 onView(withId(R.id.show_answer_button)).perform(click())
                 onView(withId(R.id.easy_button)).checkWithTimeout(matches(isDisplayed()),100,30000)

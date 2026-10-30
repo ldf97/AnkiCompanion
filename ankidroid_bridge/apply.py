@@ -22,6 +22,15 @@ def apply(root):
     edit(base+'AnkiActivity.kt','        Analytics.sendAnalyticsScreenView(analyticsScreenName)','        CompanionIntegration.requestSync()\n        Analytics.sendAnalyticsScreenView(analyticsScreenName)')
     edit(base+'AnkiActivity.kt','        customTabActivityHelper.unbindCustomTabsService(this)','        CompanionIntegration.requestSync()\n        customTabActivityHelper.unbindCustomTabsService(this)')
     vm=base+'ui/windows/reviewer/ReviewerViewModel.kt'
+    # A sync can arrive while the first WebView page is still loading. The
+    # upstream page-finished callback initializes the question; an earlier
+    # refresh exposes Show Answer prematurely and then resets it on page load.
+    edit(vm,'    override fun onPageFinished(isAfterRecreation: Boolean) {','''    private var companionPageReady = false
+
+    override fun onPageFinished(isAfterRecreation: Boolean) {
+        companionPageReady = true''')
+    edit(vm,'changes.studyQueues -> updateCurrentCard()',
+         'changes.studyQueues -> if (companionPageReady) updateCurrentCard()')
     edit(vm,'        Timber.v("ReviewerViewModel::updateCurrentCard")','        Timber.v("ReviewerViewModel::updateCurrentCard")\n        com.ichi2.anki.CompanionIntegration.beforeReview()')
     edit(vm,'        val state = queueState.await() ?: return\n        val card = currentCard.await()','''        val state = queueState.await() ?: return
         val card = currentCard.await()
