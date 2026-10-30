@@ -3,7 +3,7 @@ set -euo pipefail
 mkdir -p test-results/cross-device
 python scripts/emulator_backend.py >test-results/cross-device/backend.log 2>&1 &
 backend_pid=$!
-trap 'kill "$backend_pid" "${observer_pid:-}" 2>/dev/null || true' EXIT
+trap 'adb logcat -d >test-results/cross-device/logcat.txt 2>/dev/null || true; kill "$backend_pid" "${observer_pid:-}" 2>/dev/null || true' EXIT
 python - <<'PY'
 import time,urllib.request
 for _ in range(120):
@@ -19,6 +19,7 @@ adb install -r ankidroid-upstream/AnkiDroid/build/outputs/apk/androidTest/full/d
 (cd android && bash gradlew --no-daemon installDebug installDebugAndroidTest)
 adb shell pm grant org.ankicompanion.app com.ichi2.anki.companion.debug.permission.READ_WRITE_DATABASE
 adb shell pm grant org.ankicompanion.app android.permission.POST_NOTIFICATIONS
+adb shell appops set --uid com.ichi2.anki.companion.debug MANAGE_EXTERNAL_STORAGE allow
 adb shell am instrument -w -e class com.ichi2.anki.CompanionAcceptanceTest com.ichi2.anki.tests/com.ichi2.testutils.NewCollectionPathTestRunner >test-results/cross-device/ankidroid-instrumentation.txt 2>&1 &
 phone_pid=$!
 python - <<'PY'
