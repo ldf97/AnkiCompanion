@@ -18,6 +18,8 @@ SolidCompression=yes
 CloseApplications=yes
 RestartApplications=yes
 UninstallDisplayIcon={app}\desktop\AnkiCompanion.exe
+[Tasks]
+Name: "serverstartup"; Description: "Start the companion server when I sign in"; Flags: unchecked
 [Files]
 Source: "..\dist\AnkiCompanion\*"; DestDir: "{app}\desktop"; Flags: recursesubdirs ignoreversion
 Source: "..\dist\AnkiCompanionServer\*"; DestDir: "{app}\server"; Flags: recursesubdirs ignoreversion
@@ -28,6 +30,9 @@ Name: "{group}\AnkiCompanion"; Filename: "{app}\desktop\AnkiCompanion.exe"
 Name: "{group}\AnkiCompanion Server"; Filename: "{app}\server\AnkiCompanionServer.exe"
 Name: "{group}\Connection instructions"; Filename: "{app}\deployment\CONNECT.md"
 Name: "{group}\Uninstall"; Filename: "{uninstallexe}"
+Name: "{group}\Server data and pairing token"; Filename: "{localappdata}\AnkiCompanion\server"
+Name: "{userstartup}\AnkiCompanion Server"; Filename: "{app}\server\AnkiCompanionServer.exe"; Tasks: serverstartup; Flags: runminimized
 [Run]
+Filename: "{app}\server\AnkiCompanionServer.exe"; Description: "Start the companion server"; Flags: nowait postinstall skipifsilent runhidden
 Filename: "{app}\desktop\AnkiCompanion.exe"; Description: "Open AnkiCompanion"; Flags: nowait postinstall skipifsilent
 ; User data lives outside the installation folder and survives updates/uninstall.

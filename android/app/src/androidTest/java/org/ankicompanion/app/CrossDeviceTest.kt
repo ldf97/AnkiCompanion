@@ -62,5 +62,16 @@ class CrossDeviceTest {
             File(evidence,"state-$count.json").writeText(value.toString(2))
             signal("observed$count")
         }
+        // Finishing instrumentation kills its app process, including the live
+        // service. Keep the real automatic poller alive through native convergence.
+        val finishDeadline=System.currentTimeMillis()+180000
+        var matched=false
+        while(System.currentTimeMillis()<finishDeadline) {
+            val c=URL("http://10.0.2.2:8766/test/status").openConnection() as HttpURLConnection
+            try{matched=c.inputStream.use{JSONObject(it.bufferedReader().readText())}.getBoolean("matched")}finally{c.disconnect()}
+            if(matched)break
+            Thread.sleep(250)
+        }
+        assertTrue("AnkiDroid scheduling did not converge",matched)
     }
 }

@@ -17,7 +17,7 @@ class Bridge:
             mw.addonManager.writeConfig(NAME,self.config)
         self.file=Path(mw.pm.profileFolder())/'anki-companion-outbox.sqlite3'
         self.lock=threading.RLock();self.stopped=False;self.busy=False;self.syncing=False
-        self.collection_synced_ms=0;self.last_sync=0;self.review_dirty=False;self.settings={};self.high_water=int((time.time()-370*86400)*1000)
+        self.collection_synced_ms=0;self.last_sync=0;self.review_dirty=False;self.settings={};self.backfill_active=True;self.backfill_pending=False;self.high_water=int((time.time()-370*86400)*1000)
         with self.db() as db:
             db.executescript('CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,payload TEXT NOT NULL,sent INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS undo(id TEXT PRIMARY KEY,sent INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY);')
         self.timer=QTimer(mw);self.timer.timeout.connect(self.tick);self.timer.start(5000)
@@ -28,10 +28,17 @@ class Bridge:
     def scan(self):
         if not mw.col:return
         collection=self.config.get('collection_id','primary')
+        if self.backfill_pending and not self.backfill_active:
+            self.high_water=int((time.time()-370*86400)*1000)
+            self.backfill_active=True;self.backfill_pending=False
         with self.lock,self.db() as db:
+            before=self.high_water
             self.high_water=reconcile(mw.col.db,db,collection,self.high_water,int((time.time()-3600)*1000))
+            if self.high_water==before:self.backfill_active=False
     def collection_synced(self):
-        self.high_water=int((time.time()-370*86400)*1000)
+        # A native sync every ten seconds must not continually reset a large
+        # paginated history before the scan has reached its newer rows.
+        self.backfill_pending=True
         self.tick()
     def decks(self):
         result=[]
