@@ -17,7 +17,7 @@ class Bridge:
             mw.addonManager.writeConfig(NAME,self.config)
         self.file=Path(mw.pm.profileFolder())/'anki-companion-outbox.sqlite3'
         self.lock=threading.RLock();self.stopped=False;self.busy=False;self.syncing=False
-        self.collection_synced_ms=0;self.last_sync=0;self.settings={};self.high_water=int((time.time()-370*86400)*1000)
+        self.collection_synced_ms=0;self.last_sync=0;self.review_dirty=False;self.settings={};self.high_water=int((time.time()-370*86400)*1000)
         with self.db() as db:
             db.executescript('CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,payload TEXT NOT NULL,sent INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS undo(id TEXT PRIMARY KEY,sent INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY);')
         self.timer=QTimer(mw);self.timer.timeout.connect(self.tick);self.timer.start(5000)
@@ -85,7 +85,7 @@ class Bridge:
                 with self.lock,self.db() as db:db.execute('INSERT OR IGNORE INTO commands VALUES (?)',(command['id'],))
                 threading.Thread(target=self.ack,args=(command['id'],),daemon=True).start()
             self.sync_then(applied)
-        if self.config.get('auto_sync',True) and mw.state=='deckBrowser' and time.time()-self.last_sync>60:
+        if self.config.get('auto_sync',True) and mw.state in ('deckBrowser','overview','review') and time.time()-self.last_sync>(2 if self.review_dirty else 10):
             self.sync_then(lambda:None)
     def ack(self,identity):
         try:self.client().request('/v1/commands/'+self.config['device_id']+'/'+identity+'/ack','POST',{})
@@ -108,7 +108,7 @@ class Bridge:
                 if result.required!=result.NO_CHANGES:
                     print('Anki Companion: complete initial/full sync in Anki before study handoff')
                     return
-                self.collection_synced_ms=int(time.time()*1000)
+                self.collection_synced_ms=int(time.time()*1000);self.review_dirty=False
                 mw.col._load_scheduler();mw.col.models._clear_cache()
                 gui_hooks.sync_did_finish();mw.reset();after();self.tick()
             except Exception as exc:print('Anki Companion native sync failed:',exc)
@@ -126,6 +126,7 @@ class Bridge:
     def after_answer(self):
         if self.stopped or not mw.col:return
         try:
+            self.review_dirty=True
             self.tick()
             if mw.state!='review' or not self.settings.get('parent_deck_id'):return
             decks=self.decks();current=str(mw.col.decks.current()['id'])

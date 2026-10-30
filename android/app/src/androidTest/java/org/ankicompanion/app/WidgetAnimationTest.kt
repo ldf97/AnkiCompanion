@@ -44,13 +44,14 @@ class WidgetAnimationTest {
         instrumentation.runOnMainSync {
             val parent=FrameLayout(activity)
             val remote=CompanionWidget.buildViews(activity,state)
-            val view=remote.apply(activity,parent);parent.addView(view)
+            val view=remote.apply(activity,parent);parent.addView(view,FrameLayout.LayoutParams((320*activity.resources.displayMetrics.density).toInt(),(160*activity.resources.displayMetrics.density).toInt(),android.view.Gravity.CENTER))
             activity.setContentView(parent)
             flipper=view.findViewById(R.id.widget_warning)
             assertEquals(8,flipper.childCount)
             assertTrue(view.findViewById<TextView>(R.id.widget_status).text.contains("30/50 · 60% · 20 remaining"))
         }
         instrumentation.waitForIdleSync()
+        Thread.sleep(800) // Allow the first actual surface frame before recording evidence.
         instrumentation.runOnMainSync {assertTrue(flipper.isFlipping);first=flipper.displayedChild}
         // Wait on the instrumentation thread, leaving Android's main looper free.
         screenshot("warning-before.png")

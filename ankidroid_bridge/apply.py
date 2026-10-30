@@ -48,6 +48,7 @@ def apply(root):
     }
 
     override fun onCreate(): Boolean {''')
+    shutil.copy2(overlay/'CompanionAcceptanceTest.kt',root/'AnkiDroid/src/androidTest/java/com/ichi2/anki/CompanionAcceptanceTest.kt')
     marker.write_text(PIN+'\n')
     print('Applied companion provider and native-sync hooks to pinned AnkiDroid '+PIN)
 if __name__=='__main__':

@@ -35,6 +35,11 @@ object AnkiBridge {
             }
         };return result
     }
+    fun refreshNative(context:Context) {
+        val status=capabilities(context) ?: return
+        if(status.getBoolean("enabled") && status.getString("sync_status")!="syncing" && System.currentTimeMillis()-status.getLong("synced_ms")>10000)
+            context.contentResolver.call(root(context),"companion.sync",null,null)
+    }
     fun nativeSync(context:Context) {
         context.startActivity(Intent("com.ichi2.anki.DO_SYNC").setPackage(packageName(context)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }

@@ -8,6 +8,9 @@ import android.database.MatrixCursor
 import android.net.Uri
 import android.os.Bundle
 import anki.sync.SyncCollectionResponse
+import anki.collection.opChanges
+import com.ichi2.anki.observability.ChangeManager
+import com.ichi2.anki.common.preferences.sharedPrefs
 import com.ichi2.anki.CollectionManager.withCol
 import com.ichi2.anki.settings.Prefs
 import kotlinx.coroutines.CoroutineScope
@@ -41,6 +44,8 @@ object CompanionIntegration {
     fun configure(context: Context, options: Bundle): Bundle {
         initialize(context)
         val wasEnabled = enabled()
+        // All automatic review hooks are in the supported new reviewer.
+        context.sharedPrefs().edit().putBoolean("newReviewer", true).putBoolean("newReviewerOptions", true).apply()
         prefs().edit().putBoolean("enabled", options.getBoolean("enabled", true))
             .putString("parent_deck_id", options.getString("parent_deck_id", ""))
             .putString("clearance", options.getString("clearance", "new_and_reviews")).apply()
@@ -65,7 +70,7 @@ object CompanionIntegration {
         return status()
     }
 
-    suspend fun synchronize(): Boolean {
+    suspend fun synchronize(notifyUi: Boolean = true): Boolean {
         if (!enabled()) return false
         return mutex.withLock {
             val auth = syncAuth()
@@ -75,6 +80,7 @@ object CompanionIntegration {
             }
             prefs().edit().putString("sync_status", "syncing").apply()
             try {
+                val before = withCol { db.queryString("SELECT COUNT(*)||':'||COALESCE(SUM(reps),0)||':'||COALESCE(MAX(mod),0) FROM cards") }
                 val result = withCol { syncCollection(auth, syncMedia = false) }
                 if (result.hasNewEndpoint() && result.newEndpoint.isNotEmpty()) Prefs.currentSyncUri = result.newEndpoint
                 if (result.required != SyncCollectionResponse.ChangesRequired.NO_CHANGES) {
@@ -86,6 +92,8 @@ object CompanionIntegration {
                     .putLong("synced_ms", System.currentTimeMillis())
                     .putLong("generation", prefs().getLong("generation", 0) + 1).apply()
                 changed()
+                val after = withCol { db.queryString("SELECT COUNT(*)||':'||COALESCE(SUM(reps),0)||':'||COALESCE(MAX(mod),0) FROM cards") }
+                if (notifyUi && before != after) ChangeManager.publish(opChanges { studyQueues = true })
                 true
             } catch (e: Exception) {
                 // Avoid credentials/remote response bodies in logs or API errors.
@@ -98,7 +106,7 @@ object CompanionIntegration {
 
     suspend fun isCurrent(card: com.ichi2.anki.libanki.Card): Boolean {
         if (!enabled()) return true
-        synchronize()
+        synchronize(notifyUi = false)
         return withCol {
             val latest = getCard(card.id)
             latest.reps == card.reps && latest.mod == card.mod && latest.queue == card.queue && latest.due == card.due
@@ -108,7 +116,7 @@ object CompanionIntegration {
     suspend fun beforeReview() {
         if (!enabled()) return
         changed()
-        synchronize()
+        synchronize(notifyUi = false)
         withCol {
             val parentId = prefs().getString("parent_deck_id", "")?.toLongOrNull() ?: return@withCol
             val tree = sched.deckDueTree()

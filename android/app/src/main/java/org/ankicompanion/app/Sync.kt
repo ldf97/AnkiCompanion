@@ -29,10 +29,11 @@ object Sync {
         try {
             val api=Api(config);val outbox=Outbox(context)
             try {
+                AnkiBridge.refreshNative(context)
                 val capability=AnkiBridge.capabilities(context)
                 if(capability!=null){
                     val generation=capability.getLong("generation").toString()
-                    if(store.getSetting("native_generation")!=generation){store.setSetting("history_cursor",(System.currentTimeMillis()-370L*86400000).toString());store.setSetting("native_generation",generation)}
+                    if(store.getSetting("native_generation")!=generation && store.getSetting("backfill_pending")!="true"){store.setSetting("history_cursor",(System.currentTimeMillis()-370L*86400000).toString());store.setSetting("backfill_pending","true");store.setSetting("native_generation",generation)}
                     outbox.scan(context,store)
                     store.setSetting("bridge_status","AnkiDroid Companion · "+capability.getString("sync_status"))
                 }

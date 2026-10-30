@@ -18,7 +18,23 @@ class Outbox(context:Context):SQLiteOpenHelper(context,"reviews.db",null,1) {
         val collection=store.connection()?.optString("collection_id","primary") ?: "primary"
         val items=AnkiBridge.history(context,cursor)
         val recentFloor=System.currentTimeMillis()-3600000
-        val recent=AnkiBridge.history(context,recentFloor)
+        val recent=mutableListOf<JSONObject>()
+        var recentCursor=recentFloor
+        while(true){
+            val page=AnkiBridge.history(context,recentCursor);recent.addAll(page)
+            if(page.size<1000)break
+            recentCursor=page.last().getLong("revlog_id")+1
+        }
+        val known=mutableListOf<Pair<String,Long>>()
+        readableDatabase.rawQuery("SELECT id,payload FROM events WHERE undone=0",null).use {c->while(c.moveToNext()) {
+            val item=JSONObject(c.getString(1))
+            if(item.getString("collection_id")==collection)known.add(c.getString(0) to item.getLong("revlog_id"))
+        }}
+        val missing=mutableListOf<String>()
+        for(batch in known.chunked(300)) {
+            val present=AnkiBridge.history(context,0,batch.map{it.second}).map{it.getLong("revlog_id")}.toSet()
+            missing.addAll(batch.filter{it.second !in present}.map{it.first})
+        }
         writableDatabase.beginTransaction()
         try {
             for(item in items+recent) {
@@ -26,15 +42,10 @@ class Outbox(context:Context):SQLiteOpenHelper(context,"reviews.db",null,1) {
                 val values=ContentValues().apply{put("id",id);put("payload",item.toString());put("timestamp",item.getLong("revlog_id"))}
                 writableDatabase.insertWithOnConflict("events",null,values,SQLiteDatabase.CONFLICT_IGNORE)
             }
-            if(recent.size<1000) {
-                val present=recent.map{"$collection:${it.getLong("revlog_id")}:${it.getLong("card_id")}"}.toSet()
-                readableDatabase.rawQuery("SELECT id,payload FROM events WHERE timestamp>=? AND undone=0",arrayOf(recentFloor.toString())).use {c->
-                    while(c.moveToNext())if(JSONObject(c.getString(1)).getString("collection_id")==collection && c.getString(0) !in present)
-                        writableDatabase.execSQL("UPDATE events SET undone=1 WHERE id=?",arrayOf(c.getString(0)))
-                }
-            }
+            for(id in missing)writableDatabase.execSQL("UPDATE events SET undone=1 WHERE id=?",arrayOf(id))
             writableDatabase.setTransactionSuccessful()
         } finally {writableDatabase.endTransaction()}
+        if(items.size<1000)store.setSetting("backfill_pending","false")
         if(items.isNotEmpty())store.setSetting("history_cursor",(items.last().getLong("revlog_id")+1).toString())
     }
     fun send(api:Api,deviceId:String) {
@@ -54,12 +65,12 @@ class Outbox(context:Context):SQLiteOpenHelper(context,"reviews.db",null,1) {
     fun overlay(input:JSONObject):JSONObject {
         val state=JSONObject(input.toString());val settings=state.getJSONObject("settings");val now=System.currentTimeMillis()
         val day=Rules.day(now,settings.getString("timezone"),settings.getInt("rollover_minute"));val same=day==state.getString("date")
-        val merged=mutableMapOf<String,Int>()
-        if(same)state.optJSONArray("today_events")?.objects()?.forEach{merged[it.getString("id")]=it.getInt("duration_ms")}
+        val merged=mutableMapOf<String,Long>()
+        if(same)state.optJSONArray("today_events")?.objects()?.forEach{merged[it.getString("id")]=it.getLong("duration_ms")}
         readableDatabase.rawQuery("SELECT id,payload,undone FROM events WHERE timestamp>=?",arrayOf((now-2*86400000L).toString())).use {c->while(c.moveToNext()) {
             val item=JSONObject(c.getString(1))
             if(Rules.day(item.getLong("revlog_id"),settings.getString("timezone"),settings.getInt("rollover_minute"))==day) {
-                if(c.getInt(2)==0)merged[c.getString(0)]=item.getInt("duration_ms") else merged.remove(c.getString(0))
+                if(c.getInt(2)==0)merged[c.getString(0)]=item.getLong("duration_ms") else merged.remove(c.getString(0))
             }
         }}
         val policy=if(same)state.getJSONObject("policy") else settings
