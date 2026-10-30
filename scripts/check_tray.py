@@ -28,11 +28,13 @@ with tempfile.TemporaryDirectory() as tmp:
     win=Window(Path(tmp)/'desktop',autostart=False);win.show()
     win.receive((value,True,'','test',None,None,False,False));app.processEvents()
     assert win.progress.value()==60 and '20 remaining' in win.count.text() and '60%' in win.count.text()
+    assert win.dock.progress.value()==60 and win.dock.count.text()=='30/50 · 60% · 20 remaining'
     win.close();app.processEvents();assert win.dock.isVisible() and not win.isVisible()
     win.restore();app.processEvents();assert win.isVisible() and not win.dock.isVisible()
     value['progress']['answers']=50;value['completed']=True
     win.receive((value,True,'','done',None,None,False,False));app.processEvents()
     assert win.progress.value()==100 and '0 remaining' in win.count.text()
+    assert win.dock.progress.value()==100 and win.dock.count.text()=='50/50 · 100% · 0 remaining'
     win.quitting=True;win.close();win.dock.hide();win.tray.hide()
 print('PASS: 30/50 => 60%, 20 remaining; 50/50 => 100%, 0 remaining; dock restores')
 print('Rendered hollow/lit flame above number at 16, 24, 32 and 128 pixels; inspect tray-contact-sheet.png')

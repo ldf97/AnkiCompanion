@@ -17,6 +17,9 @@ def inspect():
     if count not in (30,50) or count in seen:return
     assert win.progress.value()==count*2
     assert f'{50-count} remaining' in win.count.text()
+    assert win.dock.progress.value()==count*2
+    assert f'{count}/50' in win.dock.count.text()
+    assert f'{50-count} remaining' in win.dock.count.text()
     assert win.current['completed']==(count==50)
     win.grab().save(str(root/f'desktop-{count}.png'))
     win.close();assert win.dock.isVisible();win.dock.grab().save(str(root/f'dock-{count}.png'));win.restore()

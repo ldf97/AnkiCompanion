@@ -51,10 +51,13 @@ class Dock(QWidget):
         self.main=main;self.origin=None;self.setWindowTitle('Anki Companion dock')
         self.panel=Panel();self.panel.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         box=QVBoxLayout(self);box.setContentsMargins(4,4,4,4);box.addWidget(self.panel)
+        self.progress=QProgressBar();self.progress.setRange(0,100);self.progress.setTextVisible(False);self.progress.setFixedHeight(5);box.addWidget(self.progress)
+        self.count=QLabel('No activity loaded');self.count.setWordWrap(True);box.addWidget(self.count)
+        self.status=QLabel('Connect to your companion server');self.status.setObjectName('muted');self.status.setWordWrap(True);box.addWidget(self.status)
         row=QHBoxLayout();study=QPushButton('Study');restore=QPushButton('Open');quit_button=QPushButton('Quit')
         study.clicked.connect(main.study);restore.clicked.connect(main.restore);quit_button.clicked.connect(main.quit_app)
         for b in (study,restore,quit_button):row.addWidget(b)
-        box.addLayout(row);self.resize(390,210)
+        box.addLayout(row);self.resize(390,270)
     def mousePressEvent(self,event):
         if event.button()==Qt.MouseButton.LeftButton:self.origin=event.globalPosition().toPoint()-self.pos()
     def mouseMoveEvent(self,event):
@@ -176,6 +179,9 @@ class Window(QMainWindow):
         self.progress.setValue(min(100,int(ratio*100)))
         remaining=max(0,g['lesson_answers']-p['answers']);percent=min(100,p['answers']*100//g['lesson_answers'])
         self.count.setText(f"{p['answers']}/{g['lesson_answers']} · {percent}% · {remaining} remaining  ·  {p['duration_ms']//1000}/{g['lesson_ms']//1000} active seconds")
+        self.dock.progress.setValue(self.progress.value())
+        self.dock.count.setText(f"{p['answers']}/{g['lesson_answers']} · {percent}% · {remaining} remaining")
+        self.dock.status.setText(self.status.text())
         devices=[(d['label'],d['device_id']) for d in value['devices']]
         existing=[(self.device.itemText(i),self.device.itemData(i)) for i in range(self.device.count())]
         if devices!=existing:

@@ -1,27 +1,38 @@
 # AnkiCompanion
 
-Native Python/PySide6 Windows companion, Kotlin Android app and home widget, FastAPI/SQLite server, and Anki desktop add-on. Development work in progress; physical Windows/AnkiDroid synchronization acceptance has **not** passed.
+AnkiCompanion provides a native Windows app and compact dock, Android app and home-screen widget, FastAPI/SQLite server, Anki desktop add-on, and separate AnkiDroid Companion edition. Closing the desktop window opens the dock; Open restores it. The original hollow/lit tray flame has the streak number BELOW it.
 
-## Run from source
+## Install
 
-Use Python 3.12. Install `requirements-desktop.txt`. Run `python -m server.main` and `python -m desktop.app` in separate terminals. Configure the URL and pairing token from `data/token.txt`; never commit this token. Package the add-on with `python scripts/package_addon.py`, install the resulting `.ankiaddon` into Anki, then configure its server URL/token and the same collection ID. See [secure network setup](deployment/CONNECT.md).
+Use [the connection guide](deployment/CONNECT.md). Windows installers and Android packages are GitHub Actions development artifacts; no production release has been published. The owner's private checkpoint includes the personal skin, source and saved evidence.
 
-The private personal character pack is intentionally excluded. Import it from your private checkpoint via the Skins dialog. Public builds include a separate neutral skin and retain the modular skin importer.
+Install the Windows package and **both** Android packages: AnkiCompanion and AnkiDroid Companion. The latter installs beside stock AnkiDroid. Sign in to the same AnkiWeb account on desktop Anki and AnkiDroid Companion and resolve the initial full-sync direction. Install the supplied desktop add-on. Connect both companion apps/add-on to the same authenticated HTTPS server and collection ID. The guide supplies a private Tailscale HTTPS setup.
 
-## Build
+The companion server counts review events; Anki's native sync service synchronizes collections and schedules. The AnkiDroid extension implements a permission-protected history and sync-status API. These endpoints are not assumed to exist in stock AnkiDroid.
 
-- Android: JDK 17, Android SDK 35, `cd android && bash gradlew testDebugUnitTest assembleDebug lintDebug`.
-- Windows: Python dependencies plus PyInstaller and Inno Setup 6; run `scripts/build_windows.ps1`. Creates a per-user installer with desktop app, server, add-on and connection instructions. Updates preserve user data.
-- GitHub Actions builds development installers/APKs and uploads test reports. It does not publish a production release. Debug APK signing keys may differ across machines/runs; debug artifacts are not a stable update channel.
+## Verified behavior
 
-## Verified and unverified
+The full **20 desktop → 10 phone → 20 desktop** sequence passed in [CI run 41074197807](https://github.com/ldf97/AnkiCompanion/actions/runs/41074197807), source `c9d674852257ef3704f4a52a8218c9fe2c5a1e06`. Both collections started synchronized with zero reviews. Actual AnkiDroid reviewer UI answered the phone cards. A real Android AppWidgetHost received system-delivered updates; the desktop app's production timer fetched state automatically. Both displayed 30/50 (60%, 20 remaining), then 50/50 and completion. Native comparison matched 50 distinct review/card identities and all tested scheduling fields, each card reviewed once. No manual sync or refresh was used after initial setup.
 
-Server tests cover progress, retry deduplication, undo tombstones, settings/day boundaries, packs and update metadata. A native integration test uses **two real Anki 26.9.3 backends and Anki's local sync server** for 20 → 30 → 50 answers, comparing review histories and card scheduling. This is not a physical AnkiDroid test. Qt offscreen checks verify flame-above-number rendering, progress and dock restoration; they do not prove Windows shell behavior.
+This is **Android emulator + real desktop Anki backend verification**, not the owner's physical phone or Windows Anki GUI. Native synchronization used Anki's local sync server, not the owner's AnkiWeb account. The compact dock now also displays progress counts, percentage, remaining total and connection status; its checks are included in subsequent CI.
 
-Stock AnkiDroid has no public full review-history feed. Unverified custom provider calls are disabled by default. Phone review totals reach the companion after native sync and desktop ingestion. Foreground `DO_SYNC` is available through **Sync AnkiDroid**; it has no completion callback. Seamless automatic handoff while reviewers remain open is not guaranteed. Background study commands use a notification because Android restricts automatic activity launches.
+Other checks cover 28 Python tests, HTTPS authentication/certificate enforcement, retry/deduplication, undo, update validation, Windows installer installation/server health, Qt tray/docking rendering, Android tests/lint, and API 35 widget warning animation. Successful builds alone are not synchronization proof.
 
-The widget uses a launcher-hosted ViewFlipper for the warning pulse. **Live widget updates** is an explicit study session with a foreground notification; Android may stop it after six hours. Otherwise refresh is best-effort periodic work. Actual launcher animation, sleep/background behavior, device networking and Windows shell behavior still require device acceptance.
+## Use and updates
 
-## Continue without losing work
+Enable **Live widget updates** while studying for five-second polling with a foreground notification. Without it, Android background work runs approximately every 15 minutes and may be deferred. Android may stop a long data-sync session after six hours. Remote study commands use a notification when Android prohibits background activity launching.
 
-Run `python scripts/run_logged.py NEW-LOG-NAME.txt -- COMMAND...` for local checks. It preserves output/exit status and creates an atomic continuation ZIP. Keep full private checkpoints separate from the public repository. Record written, unit-tested, native-backend-tested, emulator-tested and physical-device-tested results separately. Never infer the last two from a successful build. Never publish a production release without explicit authorization.
+Both apps discover stable GitHub Releases automatically and provide an Update button. Source commits alone are not installable updates. Checks cover hashes, Android package/signing identity, and Windows Authenticode publisher identity. The [signed candidate workflow](.github/workflows/release-candidate.yml) requires persistent signing keys and does not publish. Development Windows artifacts are unsigned; Android artifacts use debug keys. Production in-place updating remains unverified until persistent signing identities and devices are available. See [update setup](deployment/UPDATES.md).
+
+## Build and reproduce
+
+- Server/desktop: Python 3.12; install `requirements-desktop.txt`. Run `python -m server.main` and `python -m desktop.app`. The pairing token is created in the private data folder.
+- Android companion: JDK 17, SDK 35; `cd android && bash gradlew testDebugUnitTest assembleDebug lintDebug`.
+- Windows installer: PyInstaller and Inno Setup 6; `scripts/build_windows.ps1`.
+- AnkiDroid Companion: [pinned upstream and overlay](ankidroid_bridge/README.md); JDK 21 / SDK 36. The workflow builds the separate application ID and test APK.
+- Full acceptance: `scripts/check_cross_device.sh`, run by CI on API 35, saves instrumentation logs, screenshots, payloads and native comparison results.
+
+Private character artwork, quotes, credentials and user data are excluded. Public builds use an independent neutral skin; personal packs import without replacing their assets. Keep signing keys and pairing tokens outside git.
+
+Use `python scripts/run_logged.py UNIQUE-LOG.txt -- COMMAND...` to save test output and an atomic continuation ZIP. Physical devices, screen-off latency, the user's accounts/network, and production signed update installation remain separate acceptance checks.
+
