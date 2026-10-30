@@ -124,3 +124,33 @@ jobs:
             android/app/build/reports/androidTests/
             android/app/build/outputs/androidTest-results/
             android/app/build/emulator-evidence/
+
+  ankidroid:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ankidroid/Anki-Android
+          ref: d9bf072f814a0c37d30a694192593b31ff2df875
+          path: ankidroid-upstream
+      - uses: actions/setup-java@v4
+        with:
+          distribution: jetbrains
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Apply reviewed companion overlay
+        run: |
+          python3 ankidroid_bridge/apply.py ankidroid-upstream
+          printf 'enable_coverage=false\nenable_leak_canary=false\n' > ankidroid-upstream/local.properties
+      - name: Build separate AnkiDroid companion edition
+        working-directory: ankidroid-upstream
+        run: bash gradlew --no-daemon :AnkiDroid:assembleFullDebug -Dorg.gradle.jvmargs=-Xmx4g
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ankidroid-companion-development
+          path: |
+            ankidroid-upstream/AnkiDroid/build/outputs/apk/full/debug/*.apk
+            ankidroid-upstream/AnkiDroid/build/reports/

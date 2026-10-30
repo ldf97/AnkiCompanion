@@ -5,7 +5,7 @@ ROOT=Path(__file__).resolve().parents[1]
 DEST=ROOT.parent/'public-source'
 
 def export():
-    roots=['app','companion','server','desktop','anki_addon','android','fonts','assets','skins/study_companion','tests','scripts','deployment','installer','.github']
+    roots=['app','companion','server','desktop','anki_addon','android','fonts','assets','skins/study_companion','tests','scripts','deployment','installer','ankidroid_bridge','.github']
     files={p for directory in roots for p in (ROOT/directory).rglob('*') if p.is_file()}
     files.update(ROOT/p for p in ['VERSION.json','PUBLIC_README.md','.gitignore','requirements-server.txt','requirements-desktop.txt','requirements-test.txt'])
     ignored={'build','.kotlin','.gradle','__pycache__','.pytest_cache','local.properties'}
