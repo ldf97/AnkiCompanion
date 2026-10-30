@@ -20,6 +20,7 @@ adb install -r ankidroid-upstream/AnkiDroid/build/outputs/apk/androidTest/full/d
 adb shell pm grant org.ankicompanion.app com.ichi2.anki.companion.debug.permission.READ_WRITE_DATABASE
 adb shell pm grant org.ankicompanion.app android.permission.POST_NOTIFICATIONS
 adb shell appops set --uid com.ichi2.anki.companion.debug MANAGE_EXTERNAL_STORAGE allow
+adb shell appwidget grantbind --package org.ankicompanion.app --user 0
 adb shell am instrument -w -e class com.ichi2.anki.CompanionAcceptanceTest com.ichi2.anki.tests/com.ichi2.testutils.NewCollectionPathTestRunner >test-results/cross-device/ankidroid-instrumentation.txt 2>&1 &
 phone_pid=$!
 python - <<'PY'

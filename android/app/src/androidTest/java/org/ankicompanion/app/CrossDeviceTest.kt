@@ -1,6 +1,10 @@
 package org.ankicompanion.app
 
 import android.graphics.Bitmap
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.view.Gravity
 import android.widget.FrameLayout
 import android.widget.TextView
@@ -30,7 +34,22 @@ class CrossDeviceTest {
         val activity=activityRule.activity;val instrumentation=InstrumentationRegistry.getInstrumentation();val store=Storage(activity)
         store.saveConnection(JSONObject().put("url","http://10.0.2.2:8766").put("token","emulator-fixture-token").put("allow_lan_http",true).put("collection_id","primary"))
         assertTrue("AnkiDroid permission must be granted by the harness",AnkiBridge.permitted(activity))
-        instrumentation.runOnMainSync {LiveSyncService.start(activity);activity.moveTaskToBack(true)}
+        lateinit var widgetHost:AppWidgetHost
+        lateinit var widgetView:AppWidgetHostView
+        lateinit var host:FrameLayout
+        var widgetId=0
+        instrumentation.runOnMainSync {
+            val manager=AppWidgetManager.getInstance(activity)
+            widgetHost=AppWidgetHost(activity,7042);widgetId=widgetHost.allocateAppWidgetId()
+            assertTrue("Harness must permit widget binding",manager.bindAppWidgetIdIfAllowed(widgetId,ComponentName(activity,CompanionWidget::class.java)))
+            widgetView=widgetHost.createView(activity,widgetId,manager.getAppWidgetInfo(widgetId))
+            widgetHost.startListening()
+            host=FrameLayout(activity)
+            val dp=activity.resources.displayMetrics.density
+            host.addView(widgetView,FrameLayout.LayoutParams((320*dp).toInt(),(160*dp).toInt(),Gravity.CENTER))
+            activity.setContentView(host)
+            LiveSyncService.start(activity);activity.moveTaskToBack(true)
+        }
         signal("observer-ready")
         val evidence=File(activity.getExternalFilesDir(null),"evidence");evidence.mkdirs()
         for(count in listOf(30,50)) {
@@ -38,22 +57,20 @@ class CrossDeviceTest {
             var state:JSONObject?=null
             while(System.currentTimeMillis()<deadline) {
                 state=store.load("state.json")
-                if(state?.getJSONObject("progress")?.getInt("answers")==count)break
+                var delivered=false
+                instrumentation.runOnMainSync {delivered=widgetView.findViewById<TextView>(R.id.widget_status)?.text?.contains("$count/50")==true}
+                if(state?.getJSONObject("progress")?.getInt("answers")==count && delivered)break
                 Thread.sleep(200)
             }
             val value=state ?: error("No automatic state received")
             assertEquals(count,value.getJSONObject("progress").getInt("answers"))
             assertEquals(count==50,value.getBoolean("completed"))
-            // Render the same RemoteViews used by the home-screen widget.
-            lateinit var host:FrameLayout
+            // Inspect the real system-delivered AppWidgetHostView. No manual
+            // refresh or buildViews call is allowed in this acceptance observer.
             instrumentation.runOnMainSync {
-                host=FrameLayout(activity)
-                val remote=CompanionWidget.buildViews(activity,value);val view=remote.apply(activity,host)
                 val dp=activity.resources.displayMetrics.density
-                host.addView(view,FrameLayout.LayoutParams((320*dp).toInt(),(160*dp).toInt(),Gravity.CENTER))
-                val text=view.findViewById<TextView>(R.id.widget_status).text.toString()
+                val text=widgetView.findViewById<TextView>(R.id.widget_status).text.toString()
                 assertTrue(text.contains(if(count==30)"30/50 · 60% · 20 remaining" else "50/50 · 100% · 0 remaining"))
-                activity.setContentView(host)
                 val bitmap=Bitmap.createBitmap((360*dp).toInt(),(220*dp).toInt(),Bitmap.Config.ARGB_8888)
                 host.measure(android.view.View.MeasureSpec.makeMeasureSpec(bitmap.width,android.view.View.MeasureSpec.EXACTLY),android.view.View.MeasureSpec.makeMeasureSpec(bitmap.height,android.view.View.MeasureSpec.EXACTLY))
                 host.layout(0,0,bitmap.width,bitmap.height);host.draw(android.graphics.Canvas(bitmap))
@@ -73,5 +90,6 @@ class CrossDeviceTest {
             Thread.sleep(250)
         }
         assertTrue("AnkiDroid scheduling did not converge",matched)
+        instrumentation.runOnMainSync {widgetHost.stopListening();widgetHost.deleteAppWidgetId(widgetId)}
     }
 }
