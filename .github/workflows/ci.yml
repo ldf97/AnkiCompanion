@@ -115,11 +115,7 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: false
-          script: |
-            cd android
-            bash gradlew --no-daemon connectedDebugAndroidTest
-            mkdir -p app/build/emulator-evidence
-            adb pull /sdcard/Android/data/org.ankicompanion.app/files/evidence app/build/emulator-evidence/
+          script: bash scripts/check_android_emulator.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
