@@ -45,9 +45,10 @@ class CompanionAcceptanceTest : InstrumentedTest() {
             try{close(downgrade=false,forFullSync=true);fullUploadOrDownload(auth,serverUsn=null,upload=false)}finally{reopen(afterFullSync=true)}
             decks.select(1)
         }
-        assertEquals(20,withCol{db.queryScalar("SELECT COUNT(*) FROM revlog WHERE ease>0")})
+        assertEquals(0,withCol{db.queryScalar("SELECT COUNT(*) FROM revlog WHERE ease>0")})
         control("/test/phone-ready",JSONObject())
         awaitCondition("Companion observer did not start"){control("/test/status").optBoolean("observer_ready")}
+        awaitCondition("Desktop's first 20 answers were not produced"){control("/test/status").getInt("phase")==20}
         ActivityScenario.launch<CardViewerActivity>(ReviewerFragment.getIntent(testContext)).use {
             repeat(10){index->
                 onView(withId(R.id.show_answer_button)).checkWithTimeout(matches(isDisplayed()),100,30000)

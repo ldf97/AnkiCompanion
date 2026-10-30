@@ -33,7 +33,6 @@ def answer(count):
 def native_sync():
     result=col.sync_collection(auth,False);assert result.required==result.NO_CHANGES
     col.sched.reset()
-answer(20);native_sync()
 api=create_app(data/'companion','emulator-fixture-token')
 settings=api.state.store.settings();settings.update(lesson_answers=50,lesson_ms=0,parent_deck_id='1',timezone='UTC',rollover_minute=0,update_repository='')
 api.state.store.update_settings(settings)
@@ -41,7 +40,7 @@ def report():
     events=[Event(collection_id='primary',revlog_id=r,card_id=c,duration_ms=min(600000,max(t,0))) for r,c,t in col.db.all('SELECT id,cid,time FROM revlog WHERE ease>0')]
     api.state.store.add_events(events,api.state.packs,device_id='desktop-native')
 report()
-status=dict(phone_ready=False,observer_ready=False,phone_widget30=False,desktop_widget30=False,phone_widget50=False,desktop_widget50=False,phone_finished=False,matched=False,phase=20)
+status=dict(phone_ready=False,observer_ready=False,phone_widget30=False,desktop_widget30=False,phone_widget50=False,desktop_widget50=False,phone_finished=False,matched=False,phase=0)
 lock=threading.RLock()
 def record():
     (root/'acceptance-status.json').write_text(json.dumps(status,indent=2))
@@ -58,13 +57,25 @@ def control(action:str,body:dict=Body(default={})):
             expected=dict(reviews=col.db.all('SELECT id,cid,ease,ivl,lastIvl FROM revlog ORDER BY id'),cards=col.db.all('SELECT id,queue,type,due,ivl,reps,lapses FROM cards ORDER BY id'))
             # JSON normalizes tuples to arrays before comparing the exact schedule and revlog.
             expected=json.loads(json.dumps(expected));assert body==expected, 'AnkiDroid and desktop collection differ'
-            assert len(expected['reviews'])==50;status['matched']=True
+            assert len(expected['reviews'])==50
+            assert len({r[1] for r in expected['reviews']})==50, 'A completed card was repeated'
+            assert all(r[5]==1 for r in expected['cards']), 'Each of the 50 cards must be answered exactly once'
+            status['matched']=True
             (root/'matching-native-collections.json').write_text(json.dumps(expected,indent=2))
         record();return dict(status)
 def progress():
     while True:
         time.sleep(1)
         with lock:
+            if status['phase']==0 and status['phone_ready'] and status['observer_ready']:
+                try:
+                    # Both collections completed their initial empty sync. All
+                    # subsequent review transfers must be incremental and automatic.
+                    count=col.db.scalar('SELECT count(*) FROM revlog WHERE ease>0')
+                    if count==0:answer(20)
+                    native_sync();report();status['phase']=20;record()
+                except Exception as e:
+                    (root/'retry.log').open('a').write(type(e).__name__+': '+str(e)+'\n')
             if status['phone_widget30'] and status['desktop_widget30'] and status['phone_finished'] and status['phase']<50:
                 try:
                     native_sync()
