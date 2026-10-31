@@ -13,7 +13,11 @@ def reconcile(collection_db, outbox_db, collection_id, cursor, recent_floor):
     # Reconcile all previously observed rows, including older undo/deletions.
     # A newly imported record may have an ID below the cursor: reset the cursor
     # after each completed collection sync, then page through the backfill again.
-    known = [(i, json.loads(p)) for i,p in outbox_db.execute('SELECT id,payload FROM outbox')]
+    # Bound every GUI-thread pass: a large medical Anki collection can have
+    # hundreds of thousands of reviews. Never rescan the entire outbox on
+    # each five-second timer. Unsynced and recent entries take priority.
+    known = [(i, json.loads(p)) for i,p in outbox_db.execute(
+        'SELECT id,payload FROM outbox ORDER BY sent ASC, rowid DESC LIMIT 1200')]
     known = [(i,p) for i,p in known if p['collection_id'] == collection_id]
     for offset in range(0, len(known), 300):
         batch = known[offset:offset+300]
