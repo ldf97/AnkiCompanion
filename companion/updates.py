@@ -91,7 +91,7 @@ def install(package, release=None):
     expected=version().get('windows_signer_thumbprint','')
     if expected:
         # Retain publisher pinning for builds that opted into certificate signing.
-        script="$s=Get-AuthenticodeSignature -LiteralPath $env:ANKICOMPANION_INSTALLER; @{status=$s.Status.ToString();thumbprint=if($s.SignerCertificate){$s.SignerCertificate.Thumbprint}else{''}}|ConvertTo-Json -Compress"
+        script="$s=Get-AuthenticodeSignature -LiteralPath $env:ANKICOMPANION_INSTALLER; @{status=$s.Status.ToString();thumbprint=$s.SignerCertificate.Thumbprint}|ConvertTo-Json -Compress"
         result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',script],
             env=dict(os.environ,ANKICOMPANION_INSTALLER=str(package)),check=True,capture_output=True,text=True,timeout=30)
         validate_windows_signature(json.loads(result.stdout),expected)
