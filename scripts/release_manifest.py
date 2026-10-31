@@ -8,7 +8,13 @@ def make(directory,version,build,commit):
     directory=Path(directory);assets={}
     for platform,name in [('android','AnkiCompanion-Android.apk'),('windows','AnkiCompanion-Windows-Setup.exe'),('source','AnkiCompanion-source.zip')]:
         path=directory/name
-        if not path.is_file():raise ValueError('Missing signed release input: '+name)
+        if not path.is_file():
+            if platform=='android':
+                # Publish Windows updates even before the owner provisions a
+                # private persistent Android signing keystore. Never ship an
+                # APK signed with a rotating ephemeral CI key.
+                continue
+            raise ValueError('Missing release input: '+name)
         raw=path.read_bytes();assets[platform]=dict(filename=name,size=len(raw),sha256=hashlib.sha256(raw).hexdigest())
     result=dict(schema_version=1,version=version,build=build,commit=commit,assets=assets)
     (directory/'update.json').write_text(json.dumps(result,indent=2))
