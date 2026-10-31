@@ -3,12 +3,46 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # After the one-time Android signing secret is added, the next scheduled
+  # run automatically publishes its first signed APK; no terminal or extra
+  # manual release command is needed.
+  schedule:
+    - cron: '17 */6 * * *'
 permissions:
   contents: read
 jobs:
+  decide:
+    runs-on: ubuntu-24.04
+    outputs:
+      needed: ${{ steps.check.outputs.needed }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SIGNING_ENABLED: ${{ secrets.ANDROID_SIGNING_BUNDLE != '' || secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+    steps:
+      - id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != schedule ]; then
+            echo 'needed=true' >> "$GITHUB_OUTPUT"
+          elif [ "$SIGNING_ENABLED" != true ]; then
+            echo 'needed=false' >> "$GITHUB_OUTPUT"
+          else
+            release="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" 2>/dev/null || echo '{}')"
+            if printf '%s' "$release" | jq -e --arg sha "$GITHUB_SHA" \
+              '.target_commitish == $sha and any(.assets[]?; .name == "AnkiCompanion-Android.apk")' >/dev/null; then
+              echo 'needed=false' >> "$GITHUB_OUTPUT"
+            else
+              echo 'needed=true' >> "$GITHUB_OUTPUT"
+            fi
+          fi
   verify:
+    needs: [decide]
+    if: needs.decide.outputs.needed == 'true'
     uses: ./.github/workflows/ci.yml
   version:
+    needs: [decide]
+    if: needs.decide.outputs.needed == 'true'
     runs-on: ubuntu-24.04
     outputs:
       build: ${{ steps.set.outputs.build }}
@@ -17,7 +51,8 @@ jobs:
         shell: bash
         run: echo "build=$((1000000+GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
   release:
-    needs: [verify, version]
+    needs: [decide, verify, version]
+    if: needs.decide.outputs.needed == 'true'
     uses: ./.github/workflows/release-candidate.yml
     permissions:
       contents: write
