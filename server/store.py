@@ -47,13 +47,27 @@ class Store:
     def settings(self):
         with self.tx() as db: return self._settings(db)
 
-    def update_settings(self, settings):
+    def update_settings(self, settings, packs=None, now_ms=None):
         with self.tx() as db:
             old = self._settings(db)
             if settings['revision'] != old['revision']: raise Conflict('Settings changed on another device; reload first')
             if any(settings[k] != old[k] for k in ('timezone', 'rollover_minute')) and db.execute('SELECT 1 FROM events LIMIT 1').fetchone():
                 raise Conflict('Study timezone and rollover are fixed after the first event to preserve history')
             settings = dict(settings, revision=old['revision'] + 1)
+            # A skin switch is visual, not a new study day. Rebuild today's
+            # artwork immediately while preserving its frozen goal/policy and
+            # every review event, completion state, and streak.
+            skin_changed = any(settings[k] != old[k] for k in ('skin_id', 'skin_version'))
+            if skin_changed and packs is None:
+                raise ValueError('Skin changes require the installed skin catalog')
+            current_day = study_day(now_ms if now_ms is not None else int(time.time()*1000),
+                                    settings['timezone'], settings['rollover_minute'])
+            if skin_changed:
+                skin, _ = packs.get(settings['skin_id'], settings['skin_version'])
+                seed = db.execute("SELECT value FROM meta WHERE key='seed'").fetchone()[0]
+                lineup = daily_lineup(current_day, skin, seed)
+                db.execute("UPDATE days SET lineup=? WHERE day=?",
+                           (json.dumps(lineup), current_day))
             db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(settings),))
             return settings
 
