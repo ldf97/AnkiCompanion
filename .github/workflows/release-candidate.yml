@@ -50,7 +50,10 @@ jobs:
           APP_VERSION_NAME: ${{ inputs.version }}
           APP_VERSION_CODE: ${{ inputs.build }}
         run: |
-          test -n "$KEYSTORE_BASE64"
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "Android signed updater not yet enabled. Add a persistent private keystore to the signing environment."
+            exit 0
+          fi
           export ANDROID_KEYSTORE="$RUNNER_TEMP/release.jks"
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE"
           trap 'rm -f "$ANDROID_KEYSTORE"' EXIT
@@ -61,6 +64,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: signed-android
+          if-no-files-found: ignore
           path: candidate/
   windows:
     if: github.ref == 'refs/heads/main'
@@ -154,7 +158,8 @@ jobs:
           assert manifest['version'] == os.environ['EXPECTED_VERSION']
           assert manifest['build'] == int(os.environ['EXPECTED_BUILD'])
           assert manifest['commit'] == os.environ['EXPECTED_COMMIT']
-          assert set(manifest['assets']) == {'android', 'windows', 'source'}
+          assert {'windows', 'source'}.issubset(manifest['assets'])
+          assert set(manifest['assets']).issubset({'android','windows','source'})
           for platform, item in manifest['assets'].items():
               source = folder/item['filename']
               assert source.is_file() and source.stat().st_size == item['size'], platform
@@ -164,6 +169,7 @@ jobs:
       - name: Publish stable GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
@@ -172,5 +178,9 @@ jobs:
             echo "Release $tag already exists. Refusing to overwrite immutable release assets."
             exit 1
           fi
-          gh release create "$tag" candidate/AnkiCompanion-Android.apk candidate/AnkiCompanion-Windows-Setup.exe candidate/AnkiCompanion-source.zip candidate/update.json --target "$GITHUB_SHA" --title "AnkiCompanion $tag" --notes "Signed Windows and Android updates. Install the first signed version once; subsequent compatible signed releases are available through the app's Updates button." --latest
+          assets=(candidate/AnkiCompanion-Windows-Setup.exe candidate/AnkiCompanion-source.zip candidate/update.json)
+          if [ -f candidate/AnkiCompanion-Android.apk ]; then
+            assets+=(candidate/AnkiCompanion-Android.apk)
+          fi
+          gh release create "$tag" "${assets[@]}" --target "$GITHUB_SHA" --title "AnkiCompanion $tag" --notes "GitHub checksum-verified Windows update. Android in-place updates are included when a persistent Android release signing key is configured." --latest
 
