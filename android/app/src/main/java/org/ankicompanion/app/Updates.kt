@@ -30,8 +30,15 @@ object Updates {
     private fun githubRelease():JSONObject {
         val request=java.net.URL("https://github.com/ldf97/AnkiCompanion/releases/latest/download/update.json").openConnection() as java.net.HttpURLConnection
         request.connectTimeout=12000;request.readTimeout=15000
-        val data=request.inputStream.use{it.readNBytes(128*1024)}
-        require(data.size<128*1024){"Release manifest too large"}
+        val data=request.inputStream.use{source->
+            val out=java.io.ByteArrayOutputStream()
+            val buffer=ByteArray(8192)
+            while(true){val n=source.read(buffer);if(n<0)break
+                require(out.size()+n<=128*1024){"Release manifest too large"}
+                out.write(buffer,0,n)
+            }
+            out.toByteArray()
+        }
         val manifest=JSONObject(String(data,Charsets.UTF_8))
         require(manifest.getInt("schema_version")==1){"Invalid release manifest"}
         val version=manifest.getString("version")
