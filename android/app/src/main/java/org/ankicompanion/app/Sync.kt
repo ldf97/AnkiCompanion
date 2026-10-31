@@ -34,7 +34,7 @@ object Sync {
                 if(capability!=null){
                     val generation=capability.getLong("generation").toString()
                     if(store.getSetting("native_generation")!=generation && store.getSetting("backfill_pending")!="true"){store.setSetting("history_cursor",(System.currentTimeMillis()-370L*86400000).toString());store.setSetting("backfill_pending","true");store.setSetting("native_generation",generation)}
-                    outbox.scan(context,store)
+                    outbox.scan(context,store,capability.getString("sync_status")=="synced")
                     store.setSetting("bridge_status","AnkiDroid Companion · "+capability.getString("sync_status"))
                 }
                 else store.setSetting("bridge_status","Stock AnkiDroid: review totals arrive through desktop after native collection sync. Live cross-device review sync is not verified.")
