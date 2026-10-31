@@ -12,7 +12,7 @@ class Outbox(context:Context):SQLiteOpenHelper(context,"reviews.db",null,1) {
         db.execSQL("CREATE TABLE events(id TEXT PRIMARY KEY,payload TEXT NOT NULL,timestamp INTEGER NOT NULL,sent INTEGER NOT NULL DEFAULT 0,undone INTEGER NOT NULL DEFAULT 0,undo_sent INTEGER NOT NULL DEFAULT 0)")
     }
     override fun onUpgrade(db:SQLiteDatabase,old:Int,new:Int) {}
-    fun scan(context:Context,store:Storage) {
+    fun scan(context:Context,store:Storage,canRetract:Boolean=false) {
         val floor=System.currentTimeMillis()-370L*86400000
         val cursor=store.getSetting("history_cursor",floor.toString()).toLong()
         val collection=store.connection()?.optString("collection_id","primary") ?: "primary"
@@ -31,10 +31,20 @@ class Outbox(context:Context):SQLiteOpenHelper(context,"reviews.db",null,1) {
             if(item.getString("collection_id")==collection)known.add(c.getString(0) to item.getLong("revlog_id"))
         }}
         val missing=mutableListOf<String>()
-        for(batch in known.chunked(300)) {
-            val present=AnkiBridge.history(context,0,batch.map{it.second}).map{it.getLong("revlog_id")}.toSet()
-            missing.addAll(batch.filter{it.second !in present}.map{it.first})
+        // A native collection can be temporarily empty or behind during full
+        // sync, profile migration, or test teardown. Such absence is NOT undo
+        // evidence. Only retract when a stable completed native sync is known.
+        val before=AnkiBridge.capabilities(context)
+        if(canRetract && before?.getString("sync_status")=="synced") {
+            for(batch in known.chunked(300)) {
+                val present=AnkiBridge.history(context,0,batch.map{it.second}).map{it.getLong("revlog_id")}.toSet()
+                missing.addAll(batch.filter{it.second !in present}.map{it.first})
+            }
         }
+        val after=AnkiBridge.capabilities(context)
+        val safeToRetract=canRetract && before!=null && after!=null
+            && before.getString("sync_status")=="synced" && after.getString("sync_status")=="synced"
+            && before.getLong("generation")==after.getLong("generation")
         writableDatabase.beginTransaction()
         try {
             for(item in items+recent) {
@@ -42,7 +52,7 @@ class Outbox(context:Context):SQLiteOpenHelper(context,"reviews.db",null,1) {
                 val values=ContentValues().apply{put("id",id);put("payload",item.toString());put("timestamp",item.getLong("revlog_id"))}
                 writableDatabase.insertWithOnConflict("events",null,values,SQLiteDatabase.CONFLICT_IGNORE)
             }
-            for(id in missing)writableDatabase.execSQL("UPDATE events SET undone=1 WHERE id=?",arrayOf(id))
+            if(safeToRetract)for(id in missing)writableDatabase.execSQL("UPDATE events SET undone=1 WHERE id=?",arrayOf(id))
             writableDatabase.setTransactionSuccessful()
         } finally {writableDatabase.endTransaction()}
         if(items.size<1000)store.setSetting("backfill_pending","false")
