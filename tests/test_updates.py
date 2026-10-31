@@ -82,3 +82,36 @@ def test_no_releases_is_not_a_connection_failure(tmp_path):
     def missing(*args):raise HTTPError('https://api.github.com/repos/example/repo/releases/latest',404,'Not found',{},None)
     result=ReleaseFeed(tmp_path,fetch=missing).check(REPO,'windows','0.1.1')
     assert result['configured'] and not result['available'] and 'approved' in result['message']
+
+
+def test_official_github_windows_release_updates_without_paid_certificate(tmp_path, monkeypatch):
+    """A hashed official GitHub installer is usable without Authenticode."""
+    from companion import updates
+    from unittest.mock import MagicMock
+    payload=b'windows installer bytes'
+    manifest={
+        'schema_version':1,'version':'8.4.1','build':8401,'commit':'a'*40,
+        'assets':{'windows':{'filename':'AnkiCompanion-Windows-Setup.exe',
+                              'sha256':hashlib.sha256(payload).hexdigest(),'size':len(payload)}}
+    }
+    class Data(BytesIO):
+        def geturl(self):return updates.PUBLIC_RELEASES+'update.json'
+    monkeypatch.setattr(updates.urllib.request,'urlopen',lambda *a,**k:Data(json.dumps(manifest).encode()))
+    result=updates.github_release('windows')
+    assert result['available'] and result['download_url'].startswith(updates.PUBLIC_RELEASES)
+    installer=tmp_path/result['filename'];installer.write_bytes(payload)
+    monkeypatch.setattr(updates.sys,'platform','win32')
+    monkeypatch.setattr(updates,'version',lambda:{'version':'0.1.1','windows_signer_thumbprint':''})
+    launched=[]
+    monkeypatch.setattr(updates.subprocess,'Popen',lambda args,**kwargs:launched.append(args))
+    updates.install(installer,result)
+    assert launched and launched[0][0]==str(installer)
+    installer.write_bytes(b'tampered')
+    with pytest.raises(ValueError,match='checksum'):updates.install(installer,result)
+
+
+def test_github_unsigned_release_cannot_launch_arbitrary_executable(tmp_path,monkeypatch):
+    from companion import updates
+    executable=tmp_path/'some-installer.exe';executable.write_bytes(b'x')
+    monkeypatch.setattr(updates.sys,'platform','win32')
+    with pytest.raises(ValueError,match='official'):updates.install(executable,None)
