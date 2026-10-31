@@ -44,6 +44,9 @@ object Updates {
         val version=manifest.getString("version")
         require(Regex("[0-9]+\\.[0-9]+\\.[0-9]+").matches(version)){"Invalid release version"}
         val build=manifest.getInt("build")
+        if(!manifest.getJSONObject("assets").has("android"))return JSONObject()
+            .put("configured",true).put("available",false)
+            .put("message","Android signed update not yet published")
         val asset=manifest.getJSONObject("assets").getJSONObject("android")
         val name=asset.getString("filename")
         require(Regex("[A-Za-z0-9_.-]+\\.apk").matches(name)){"Invalid release APK name"}
