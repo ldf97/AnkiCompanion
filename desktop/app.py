@@ -234,7 +234,7 @@ class Window(QMainWindow):
         def show(result):
             dialog=QDialog(self);dialog.setWindowTitle('Skins');box=QVBoxLayout(dialog);combo=QComboBox()
             for skin in result['skins']:combo.addItem(skin['name']+' · '+skin['version'],skin)
-            box.addWidget(combo);note=QLabel('Changes take effect on the next study day.');box.addWidget(note)
+            box.addWidget(combo);note=QLabel('Skin changes take effect immediately and preserve your study progress.');box.addWidget(note)
             activate=QPushButton('Use selected skin');import_button=QPushButton('Import skin ZIP');box.addWidget(activate);box.addWidget(import_button)
             def use():
                 skin=combo.currentData();s=dict(self.current['settings'],skin_id=skin['id'],skin_version=skin['version']);self.launch(lambda:self.client().request('/v1/settings','PUT',s));dialog.accept()
