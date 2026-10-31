@@ -54,7 +54,7 @@ def download(client,release,directory):
     digest=hashlib.sha256();size=0
     try:
         with opener.open(request,timeout=60) as source,temp.open('wb') as target:
-            if not source.geturl().startswith('https://'):
+            if 'download_url' in release and not source.geturl().startswith('https://'):
                 raise ValueError('Insecure update redirect')
             while chunk:=source.read(1024*1024):
                 size+=len(chunk)
