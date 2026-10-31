@@ -296,7 +296,7 @@ class Window(QMainWindow):
                     self.status.setText('Downloading and verifying update…')
                     self.launch(lambda:updates.download(self.client(),release,self.storage/'updates'),ready)
             elif interactive:self.status.setText(release.get('message','No newer release'))
-        self.launch(lambda:self.client().request('/v1/updates/'+platform+'?current='+updates.version()['version']+('&force=true' if interactive else '')),received)
+        self.launch(lambda:updates.github_release(platform),received)
     def restore(self):self.dock.hide();self.showNormal();self.raise_();self.activateWindow()
     def closeEvent(self,event):
         if self.quitting:event.accept();return
