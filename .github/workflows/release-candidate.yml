@@ -10,6 +10,11 @@ on:
         description: Android build number greater than every prior release
         required: true
         type: number
+      publish:
+        description: Publish this signed candidate as a stable GitHub Release (after device acceptance)
+        required: true
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -104,5 +109,50 @@ jobs:
         with:
           name: signed-release-candidate
           path: candidate/
-      # Intentionally no publication step. Production release requires separate
-      # explicit owner authorization after device acceptance and review.
+      # Publishing is an explicit dispatch choice, not an automatic side effect
+      # of committing source code. Only the exact signed and hashed candidate
+      # is eligible for publication.
+  publish:
+    if: inputs.publish
+    needs: [assemble]
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-release-candidate
+          path: candidate
+      - name: Verify exact signed release artifacts
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+          EXPECTED_BUILD: ${{ inputs.build }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib
+          folder = pathlib.Path('candidate')
+          manifest = json.loads((folder/'update.json').read_text())
+          assert manifest['version'] == os.environ['EXPECTED_VERSION']
+          assert manifest['build'] == int(os.environ['EXPECTED_BUILD'])
+          assert manifest['commit'] == os.environ['EXPECTED_COMMIT']
+          assert set(manifest['assets']) == {'android', 'windows', 'source'}
+          for platform, item in manifest['assets'].items():
+              source = folder/item['filename']
+              assert source.is_file() and source.stat().st_size == item['size'], platform
+              assert hashlib.sha256(source.read_bytes()).hexdigest() == item['sha256'], platform
+          print('Verified all release package hashes, version, build, and commit')
+          PY
+      - name: Publish stable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v${RELEASE_VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists. Refusing to overwrite immutable release assets."
+            exit 1
+          fi
+          gh release create "$tag" candidate/AnkiCompanion-Android.apk candidate/AnkiCompanion-Windows-Setup.exe candidate/AnkiCompanion-source.zip candidate/update.json --target "$GITHUB_SHA" --title "AnkiCompanion $tag" --notes "Signed Windows and Android updates. Install the first signed version once; subsequent compatible signed releases are available through the app's Updates button." --latest
+
