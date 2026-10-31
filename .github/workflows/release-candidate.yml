@@ -1,5 +1,16 @@
 name: Prepare signed release candidate
 on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      build:
+        required: true
+        type: number
+      publish:
+        required: true
+        type: boolean
   workflow_dispatch:
     inputs:
       version:
