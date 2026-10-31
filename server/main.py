@@ -74,7 +74,7 @@ def create_app(data_dir=None, token=None, clock=None):
     @api.put('/v1/settings', dependencies=[Depends(auth)])
     def settings(body: Settings):
         packs.get(body.skin_id, body.skin_version)
-        return store.update_settings(body.model_dump())
+        return store.update_settings(body.model_dump(), packs=packs, now_ms=now())
 
     @api.get('/v1/settings', dependencies=[Depends(auth)])
     def read_settings(): return store.settings()

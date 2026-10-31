@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 from io import BytesIO
+import shutil
 from zipfile import ZipFile
 import json, pytest
 from fastapi.testclient import TestClient
@@ -138,3 +139,30 @@ def test_snapshots_choose_device_deck(client):
     assert client.post('/v1/snapshots',json=payload).status_code==200
     state=client.get('/v1/state').json()
     assert state['next_decks']['phone']['id']=='1'
+
+def test_switch_skin_immediately_preserves_reviews_and_frozen_goal(client, tmp_path):
+    # A private skin has no source assets in the public repository. Make a
+    # second valid test pack using the neutral fixture instead.
+    skin_dir = tmp_path / 'packs' / 'eren_anki' / '1.0.0'
+    shutil.copytree(Path(__file__).resolve().parents[1] / 'skins' / 'study_companion', skin_dir)
+    manifest = skin_dir / 'skin.json'
+    skin = json.loads(manifest.read_text())
+    skin['id'] = 'eren_anki'
+    skin['name'] = 'Eren test fixture'
+    manifest.write_text(json.dumps(skin))
+    client.app.state.packs._cache = None
+
+    original = client.get('/v1/state').json()
+    assert original['lineup']['skin_id'] == 'study_companion'
+    assert client.post('/v1/events', json={'events': [event()]}).status_code == 200
+    before = client.get('/v1/state').json()
+    changed = dict(before['settings'], skin_id='eren_anki', skin_version='1.0.0')
+    assert client.put('/v1/settings', json=changed).status_code == 200
+    after = client.get('/v1/state').json()
+    assert after['lineup']['skin_id'] == 'eren_anki'
+    assert after['settings']['skin_id'] == 'eren_anki'
+    assert after['policy'] == before['policy']
+    assert after['progress'] == before['progress']
+    assert after['streak'] == before['streak']
+    assert after['lineup']['date'] == before['lineup']['date']
+    assert client.get('/v1/frame.png').status_code == 200
