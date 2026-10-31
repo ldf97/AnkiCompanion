@@ -81,16 +81,23 @@ jobs:
           RELEASE_BUILD: ${{ inputs.build }}
         run: |
           $ErrorActionPreference='Stop'
-          if (-not $env:PFX_BASE64) { throw 'Persistent Windows signing certificate is required' }
+          $cert=$null
           $path=Join-Path $env:RUNNER_TEMP publisher.pfx
-          [IO.File]::WriteAllBytes($path,[Convert]::FromBase64String($env:PFX_BASE64))
-          try {
+          if ($env:PFX_BASE64) {
+            [IO.File]::WriteAllBytes($path,[Convert]::FromBase64String($env:PFX_BASE64))
             $password=ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
             $cert=Get-PfxCertificate -FilePath $path -Password $password
-            @{version=$env:RELEASE_VERSION;build=[int]$env:RELEASE_BUILD;commit=$env:GITHUB_SHA;windows_signer_thumbprint=$cert.Thumbprint} | ConvertTo-Json | Set-Content VERSION.json -Encoding utf8NoBOM
+          }
+          try {
+            $thumbprint=if ($cert) { $cert.Thumbprint } else { '' }
+            @{version=$env:RELEASE_VERSION;build=[int]$env:RELEASE_BUILD;commit=$env:GITHUB_SHA;windows_signer_thumbprint=$thumbprint} | ConvertTo-Json | Set-Content VERSION.json -Encoding utf8NoBOM
             ./scripts/build_windows.ps1
-            $result=Set-AuthenticodeSignature -FilePath packages/AnkiCompanion-Windows-Setup.exe -Certificate $cert -HashAlgorithm SHA256 -TimestampServer http://timestamp.digicert.com
-            if ($result.Status -ne 'Valid') { throw "Signature is not trusted: $($result.Status)" }
+            if ($cert) {
+              $result=Set-AuthenticodeSignature -FilePath packages/AnkiCompanion-Windows-Setup.exe -Certificate $cert -HashAlgorithm SHA256 -TimestampServer http://timestamp.digicert.com
+              if ($result.Status -ne 'Valid') { throw "Signature is not trusted: $($result.Status)" }
+            } else {
+              Write-Host 'No optional paid Windows signing certificate. Publishing with GitHub SHA-256 verified update manifest.'
+            }
           } finally { Remove-Item $path -ErrorAction SilentlyContinue }
       - uses: actions/upload-artifact@v4
         with:
