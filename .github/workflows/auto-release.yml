@@ -10,6 +10,9 @@ on:
     - cron: '17 */6 * * *'
 permissions:
   contents: read
+concurrency:
+  group: anki-main-release
+  cancel-in-progress: true
 jobs:
   decide:
     runs-on: ubuntu-24.04
