@@ -99,6 +99,14 @@ class Window(QMainWindow):
         self.storage.mkdir(parents=True,exist_ok=True)
         self.config_path=self.storage/'connection.json';self.state_path=self.storage/'state.json'
         self.config=json.loads(self.config_path.read_text()) if self.config_path.exists() else {}
+        # First-run Windows connection is localhost; no token transcription.
+        if not self.config.get('token'):
+            local=Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / 'AnkiCompanion' / 'server' / 'token.txt'
+            if local.is_file():
+                token=local.read_text(encoding='utf-8').strip()
+                if len(token)>=16:
+                    self.config=dict(url='http://127.0.0.1:8765',token=token,allow_lan_http=False)
+                    write_json(self.config_path,self.config,private=True)
         self.current=json.loads(self.state_path.read_text()) if self.state_path.exists() else None
         self.packs=Packs(ROOT/'skins',self.storage/'packs');self.jobs=[];self.syncing=False;self.quitting=False;self.last_key=None
         self.dock=Dock(self);self.tray=QSystemTrayIcon(self)
@@ -108,7 +116,9 @@ class Window(QMainWindow):
         if QSystemTrayIcon.isSystemTrayAvailable():self.tray.show()
         body=QWidget();self.setCentralWidget(body);box=QVBoxLayout(body);box.setContentsMargins(22,18,22,18);box.setSpacing(12)
         head=QHBoxLayout();title=QLabel('ANKI  /  COMPANION');title.setObjectName('title');head.addWidget(title);head.addStretch()
-        connect=QPushButton('Connection');connect.clicked.connect(self.connect_dialog);head.addWidget(connect);box.addLayout(head)
+        connect=QPushButton('Connection');connect.clicked.connect(self.connect_dialog);head.addWidget(connect)
+        pairing=QPushButton('Pair phone');pairing.clicked.connect(self.show_pairing);head.addWidget(pairing)
+        box.addLayout(head)
         self.panel=Panel();box.addWidget(self.panel,1)
         self.status=QLabel('Connect your server to begin.');self.status.setWordWrap(True);box.addWidget(self.status)
         self.progress=QProgressBar();self.progress.setRange(0,100);self.progress.setTextVisible(False);self.progress.setFixedHeight(7);box.addWidget(self.progress)
@@ -207,6 +217,21 @@ class Window(QMainWindow):
         if not deck or not device:self.status.setText('Choose a parent deck and connect Anki first.');return
         if int(time.time()*1000)-device['updated_ms']>120000:self.status.setText('Study device is offline. Open Anki on that device and refresh.');return
         self.launch(lambda:self.client().request('/v1/commands','POST',dict(device_id=identity,action='study',deck_id=deck['id'])),lambda _:self.status.setText('Study request sent to '+device['label']))
+    def show_pairing(self):
+        # Personal installer provisions this link; credentials stay off GitHub.
+        path=Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / 'AnkiCompanion' / 'server' / 'pairing-link.txt'
+        if not path.is_file():
+            QMessageBox.information(self,'Pair phone',
+                'Your private pairing link is not ready. Open the installed Pair Phone shortcut or check that the PC is online.')
+            return
+        link=path.read_text(encoding='utf-8').strip()
+        if not link.startswith('https://'):
+            QMessageBox.warning(self,'Pair phone','The pairing link is invalid.')
+            return
+        QApplication.clipboard().setText(link)
+        QMessageBox.information(self,'Pair phone',
+            'Pairing link copied to the clipboard. Paste it once into the phone companion Connection dialog. Keep it private; it contains your pairing credential. The PC must stay online.')
+
     def connect_dialog(self):
         dialog=QDialog(self);dialog.setWindowTitle('Connect companion server');form=QFormLayout(dialog)
         url=QLineEdit(self.config.get('url','http://127.0.0.1:8765'));token=QLineEdit(self.config.get('token',''));token.setEchoMode(QLineEdit.EchoMode.Password)
