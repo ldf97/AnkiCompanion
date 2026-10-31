@@ -83,8 +83,7 @@ class MainActivity:Activity() {
         bridge.text=storage.getSetting("bridge_status")
         val line=value.getJSONObject("lineup");val key=line.toString()+value.getBoolean("completed")+value.getInt("streak")+System.currentTimeMillis()/60000
         if(key!=renderedKey) {
-            renderedKey=key
-            async({Renderer(applicationContext).draw(value,Skins(applicationContext).directory(line.getString("skin_id"),line.getString("skin_version")))}){result->scene.frame=result as Frame}
+            async({Renderer(applicationContext).draw(value,Skins(applicationContext).directory(line.getString("skin_id"),line.getString("skin_version")))}){result->scene.frame=result as Frame;renderedKey=key}
         }
         val device=value.getJSONArray("devices").objects().firstOrNull{it.getString("device_id")==storage.deviceId}
         val latest=device?.getJSONArray("decks")?.objects() ?: emptyList()
@@ -146,7 +145,7 @@ class MainActivity:Activity() {
     private fun skins() {
         async({api().json("/v1/skins").getJSONArray("skins").objects()}){result->
             @Suppress("UNCHECKED_CAST") val available=result as List<JSONObject>
-            AlertDialog.Builder(this).setTitle("Skin · changes next study day").setItems(available.map{it.getString("name")+" "+it.getString("version")}.toTypedArray()){_,index->
+            AlertDialog.Builder(this).setTitle("Skin · applies immediately").setItems(available.map{it.getString("name")+" "+it.getString("version")}.toTypedArray()){_,index->
                 val current=state ?: return@setItems;val chosen=available[index]
                 val s=JSONObject(current.getJSONObject("settings").toString()).put("skin_id",chosen.getString("id")).put("skin_version",chosen.getString("version"));async({api().json("/v1/settings","PUT",s)})
             }.setNeutralButton("Import ZIP"){_,_->startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("application/zip").addCategory(Intent.CATEGORY_OPENABLE),10)}.setNegativeButton("Cancel",null).show()
