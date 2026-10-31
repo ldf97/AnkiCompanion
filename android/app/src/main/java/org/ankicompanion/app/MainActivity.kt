@@ -96,15 +96,25 @@ class MainActivity:Activity() {
     }
     private fun connect() {
         val old=storage.connection() ?: JSONObject();val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(20),0,dp(20),0)}
-        val url=EditText(this).apply{hint="https://your-server.example";setText(old.optString("url"));inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI}
+        val url=EditText(this).apply{hint="Paste pairing link from Windows";setText(old.optString("url"));inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI}
         val token=EditText(this).apply{hint="Pairing token";setText(old.optString("token"));inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD}
         val collection=EditText(this).apply{hint="Collection ID";setText(old.optString("collection_id","primary"))}
         val lan=CheckBox(this).apply{text="Allow HTTP on a trusted local network";isChecked=old.optBoolean("allow_lan_http")}
         for(view in listOf(url,token,collection,lan))box.addView(view)
         AlertDialog.Builder(this).setTitle("Companion server").setView(box).setNegativeButton("Cancel",null).setPositiveButton("Connect"){_,_->
             try {
-                Api.validate(url.text.toString().trim(),lan.isChecked);require(Regex("[A-Za-z0-9_-]{1,100}").matches(collection.text.toString())){"Invalid collection ID"}
-                storage.saveConnection(JSONObject().put("url",url.text.toString().trim().trimEnd('/')).put("token",token.text.toString().trim()).put("allow_lan_http",lan.isChecked).put("collection_id",collection.text.toString()))
+                val pasted=url.text.toString().trim()
+                val parsed=android.net.Uri.parse(pasted)
+                // A single HTTPS URL carries the server address, token, and
+                // collection ID. Existing manual connection fields still work.
+                val embedded=if(parsed.scheme=="https")parsed.getQueryParameter("token") else null
+                val serverUrl=if(embedded!=null)pasted.substringBefore('?').trimEnd('/') else pasted.trimEnd('/')
+                val pairingToken=embedded ?: token.text.toString().trim()
+                val pairingCollection=if(embedded!=null)parsed.getQueryParameter("collection_id") ?: "primary" else collection.text.toString()
+                Api.validate(serverUrl,lan.isChecked)
+                require(pairingToken.length>=16){"Invalid pairing link or token"}
+                require(Regex("[A-Za-z0-9_-]{1,100}").matches(pairingCollection)){"Invalid collection ID"}
+                storage.saveConnection(JSONObject().put("url",serverUrl).put("token",pairingToken).put("allow_lan_http",lan.isChecked).put("collection_id",pairingCollection))
                 if(android.os.Build.VERSION.SDK_INT>=33)requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),3)
                 refresh()
             }catch(e:Exception){status.text=e.message}
