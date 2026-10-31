@@ -70,14 +70,32 @@ def validate_windows_signature(signature, expected):
     if signature.get('status')!='Valid' or signature.get('thumbprint','').upper()!=expected.upper():
         raise ValueError('Windows installer signature does not match the trusted publisher')
 
-def install(package):
+def install(package, release=None):
+    """Run a verified GitHub release installer. A paid Authenticode cert is optional.
+
+    This function never runs an arbitrary local executable: the downloader
+    verifies the SHA-256 in the official GitHub release manifest, and we
+    verify it again before launching the installer.
+    """
     package=Path(package).resolve()
-    if sys.platform=='win32' and package.suffix.lower()=='.exe':
-        # Pass the path through an environment value, never interpolate it as code.
-        script="$s=Get-AuthenticodeSignature -LiteralPath $env:ANKICOMPANION_INSTALLER; @{status=$s.Status.ToString();thumbprint=$s.SignerCertificate.Thumbprint}|ConvertTo-Json -Compress"
+    if sys.platform!='win32' or package.suffix.lower()!='.exe':
+        raise ValueError('Windows installer required')
+    if not release or not release.get('download_url','').startswith(PUBLIC_RELEASES):
+        raise ValueError('Only an official verified GitHub Release can be installed')
+    if package.name!=release.get('filename'):
+        raise ValueError('Installed package does not match release filename')
+    if not re.fullmatch(r'[a-f0-9]{64}',release.get('sha256','')):
+        raise ValueError('Invalid release checksum')
+    if package.stat().st_size!=release.get('size') or hashlib.sha256(package.read_bytes()).hexdigest()!=release['sha256']:
+        raise ValueError('Release installer checksum mismatch')
+    expected=version().get('windows_signer_thumbprint','')
+    if expected:
+        # Retain publisher pinning for builds that opted into certificate signing.
+        script="$s=Get-AuthenticodeSignature -LiteralPath $env:ANKICOMPANION_INSTALLER; @{status=$s.Status.ToString();thumbprint=if($s.SignerCertificate){$s.SignerCertificate.Thumbprint}else{''}}|ConvertTo-Json -Compress"
         result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',script],
             env=dict(os.environ,ANKICOMPANION_INSTALLER=str(package)),check=True,capture_output=True,text=True,timeout=30)
-        validate_windows_signature(json.loads(result.stdout),version().get('windows_signer_thumbprint',''))
-        subprocess.Popen([str(package),'/CURRENTUSER','/RESTARTAPPLICATIONS'],close_fds=True)
-        return
-    raise ValueError('Automatic installation is available for the Windows installer. Use the source package on this platform.')
+        validate_windows_signature(json.loads(result.stdout),expected)
+    # Windows may still ask for an installer/security confirmation. No shell is
+    # required, and the normal installer preserves user data across upgrades.
+    subprocess.Popen([str(package),'/CURRENTUSER','/RESTARTAPPLICATIONS'],close_fds=True)
+
