@@ -291,7 +291,7 @@ class Window(QMainWindow):
                 text=release.get('notes','')[:1500]+'\n\nSource commit: '+release.get('commit','')
                 if QMessageBox.question(self,'Update to '+release['version'],text+'\n\nDownload and update?')==QMessageBox.StandardButton.Yes:
                     def ready(path):
-                        try:updates.install(path);self.quit_app()
+                        try:updates.install(path,release);self.quit_app()
                         except ValueError as exc:self.status.setText(str(exc)+' Downloaded to '+str(path))
                     self.status.setText('Downloading and verifying update…')
                     self.launch(lambda:updates.download(self.client(),release,self.storage/'updates'),ready)
