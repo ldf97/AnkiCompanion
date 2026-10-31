@@ -43,6 +43,7 @@ jobs:
       - name: Build with persistent release key
         working-directory: android
         env:
+          SIGNING_BUNDLE: ${{ secrets.ANDROID_SIGNING_BUNDLE }}
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -50,13 +51,27 @@ jobs:
           APP_VERSION_NAME: ${{ inputs.version }}
           APP_VERSION_CODE: ${{ inputs.build }}
         run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "Android signed updater not yet enabled. Add a persistent private keystore to the signing environment."
+          if [ -z "$SIGNING_BUNDLE" ] && [ -z "$KEYSTORE_BASE64" ]; then
+            echo "No persistent Android release key configured: Windows-only release."
             exit 0
           fi
           export ANDROID_KEYSTORE="$RUNNER_TEMP/release.jks"
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE"
-          trap 'rm -f "$ANDROID_KEYSTORE"' EXIT
+          if [ -n "$SIGNING_BUNDLE" ]; then
+            python3 - <<'PY'
+          import base64,json,os,pathlib
+          bundle=json.loads(base64.b64decode(os.environ['SIGNING_BUNDLE'],validate=True))
+          data=base64.b64decode(bundle['keystore_base64'],validate=True)
+          pathlib.Path(os.environ['RUNNER_TEMP'],'release.jks').write_bytes(data)
+          for name,key in [('store-password','store_password'),('key-password','key_password'),('key-alias','alias')]:
+              pathlib.Path(os.environ['RUNNER_TEMP'],name).write_text(bundle[key])
+          PY
+            export ANDROID_STORE_PASSWORD="$(cat "$RUNNER_TEMP/store-password")"
+            export ANDROID_KEY_PASSWORD="$(cat "$RUNNER_TEMP/key-password")"
+            export ANDROID_KEY_ALIAS="$(cat "$RUNNER_TEMP/key-alias")"
+          else
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE"
+          fi
+          trap 'rm -f "$ANDROID_KEYSTORE" "$RUNNER_TEMP/store-password" "$RUNNER_TEMP/key-password" "$RUNNER_TEMP/key-alias"' EXIT
           bash gradlew --no-daemon testReleaseUnitTest lintRelease assembleRelease
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
           mkdir -p ../candidate
