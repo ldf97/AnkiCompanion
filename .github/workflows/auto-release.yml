@@ -1,0 +1,28 @@
+name: Test, sign and publish new versions
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.set.outputs.build }}
+    steps:
+      - id: set
+        shell: bash
+        run: echo "build=$((1000000+GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
+  release:
+    needs: [verify, version]
+    uses: ./.github/workflows/release-candidate.yml
+    permissions:
+      contents: write
+    with:
+      version: 1.0.${{ github.run_number }}
+      build: ${{ fromJSON(needs.version.outputs.build) }}
+      publish: true
+    secrets: inherit

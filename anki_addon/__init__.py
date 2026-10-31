@@ -17,12 +17,12 @@ class Bridge:
             mw.addonManager.writeConfig(NAME,self.config)
         self.file=Path(mw.pm.profileFolder())/'anki-companion-outbox.sqlite3'
         self.lock=threading.RLock();self.stopped=False;self.busy=False;self.syncing=False
-        self.collection_synced_ms=0;self.last_sync=0;self.review_dirty=False;self.settings={};self.backfill_active=True;self.backfill_pending=False;self.high_water=int((time.time()-370*86400)*1000)
+        self.collection_synced_ms=0;self.last_sync=0;self.last_scan=0;self.review_dirty=False;self.settings={};self.backfill_active=True;self.backfill_pending=False;self.high_water=int((time.time()-370*86400)*1000)
         with self.db() as db:
             db.executescript('CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,payload TEXT NOT NULL,sent INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS undo(id TEXT PRIMARY KEY,sent INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY);')
         self.timer=QTimer(mw);self.timer.timeout.connect(self.tick);self.timer.start(5000)
         QTimer.singleShot(1000,self.tick)
-    def db(self):return sqlite3.connect(self.file,timeout=20)
+    def db(self):return sqlite3.connect(self.file,timeout=0.5)
     def stop(self):self.stopped=True;self.timer.stop()
     def client(self):return Client(self.config['server_url'],self.config['token'],self.config.get('allow_lan_http',False))
     def scan(self):
@@ -51,7 +51,12 @@ class Bridge:
         return result
     def tick(self):
         if self.stopped or self.busy or self.syncing or not mw.col or not self.config.get('token'):return
-        try:self.scan();decks=self.decks()
+        try:
+            # Never scan the full history on every five-second GUI timer.
+            # A review wakes it immediately; idle history reads are throttled.
+            if self.review_dirty or time.time()-self.last_scan>=20:
+                self.scan();self.last_scan=time.time()
+            decks=self.decks()
         except Exception as exc:print('Anki Companion scan:',exc);return
         self.busy=True
         def worker():
@@ -104,7 +109,8 @@ class Bridge:
             print('Anki Companion: configure native Anki sync before automatic handoff')
             return
         self.syncing=True;self.last_sync=time.time()
-        gui_hooks.sync_will_start()
+        # Do not emit Anki's global sync hooks manually; they can invoke
+        # unrelated add-ons and cause re-entrant callbacks.
         def finished(future):
             self.syncing=False
             if self.stopped or not mw.col:return
@@ -117,7 +123,7 @@ class Bridge:
                     return
                 self.collection_synced_ms=int(time.time()*1000);self.review_dirty=False
                 mw.col._load_scheduler();mw.col.models._clear_cache()
-                gui_hooks.sync_did_finish();mw.reset();after();self.tick()
+                mw.reset();after();self.tick()
             except Exception as exc:print('Anki Companion native sync failed:',exc)
         # Anki owns the collection operation and scheduling merge; never copy its DB.
         try:mw.taskman.with_progress(lambda:mw.col.sync_collection(auth,mw.pm.media_syncing_enabled()),finished)
@@ -149,15 +155,24 @@ class Bridge:
 
 def opened():
     global controller
-    if controller:controller.stop()
-    controller=Bridge()
+    try:
+        if controller:controller.stop()
+        controller=Bridge()
+    except Exception as exc:
+        # A companion integration must NEVER prevent Anki from starting.
+        print('Anki Companion initialization disabled:',exc)
+        controller=None
 def closed():
     global controller
     if controller:controller.stop();controller=None
 def answered(*args):
-    if controller:controller.answered(*args)
+    if controller:
+        try:controller.answered(*args)
+        except Exception as exc:print('Anki Companion answer callback:',exc)
 def synced(*args):
-    if controller:controller.collection_synced()
+    if controller:
+        try:controller.collection_synced()
+        except Exception as exc:print('Anki Companion sync callback:',exc)
 gui_hooks.profile_did_open.append(opened)
 gui_hooks.profile_will_close.append(closed)
 gui_hooks.reviewer_did_answer_card.append(answered)

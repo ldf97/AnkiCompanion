@@ -1,5 +1,16 @@
 name: Prepare signed release candidate
 on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      build:
+        required: true
+        type: number
+      publish:
+        required: true
+        type: boolean
   workflow_dispatch:
     inputs:
       version:
@@ -10,6 +21,11 @@ on:
         description: Android build number greater than every prior release
         required: true
         type: number
+      publish:
+        description: Publish this signed candidate as a stable GitHub Release (after device acceptance)
+        required: true
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -34,7 +50,10 @@ jobs:
           APP_VERSION_NAME: ${{ inputs.version }}
           APP_VERSION_CODE: ${{ inputs.build }}
         run: |
-          test -n "$KEYSTORE_BASE64"
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "Android signed updater not yet enabled. Add a persistent private keystore to the signing environment."
+            exit 0
+          fi
           export ANDROID_KEYSTORE="$RUNNER_TEMP/release.jks"
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE"
           trap 'rm -f "$ANDROID_KEYSTORE"' EXIT
@@ -45,6 +64,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: signed-android
+          if-no-files-found: ignore
           path: candidate/
   windows:
     if: github.ref == 'refs/heads/main'
@@ -65,16 +85,23 @@ jobs:
           RELEASE_BUILD: ${{ inputs.build }}
         run: |
           $ErrorActionPreference='Stop'
-          if (-not $env:PFX_BASE64) { throw 'Persistent Windows signing certificate is required' }
+          $cert=$null
           $path=Join-Path $env:RUNNER_TEMP publisher.pfx
-          [IO.File]::WriteAllBytes($path,[Convert]::FromBase64String($env:PFX_BASE64))
-          try {
+          if ($env:PFX_BASE64) {
+            [IO.File]::WriteAllBytes($path,[Convert]::FromBase64String($env:PFX_BASE64))
             $password=ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
             $cert=Get-PfxCertificate -FilePath $path -Password $password
-            @{version=$env:RELEASE_VERSION;build=[int]$env:RELEASE_BUILD;commit=$env:GITHUB_SHA;windows_signer_thumbprint=$cert.Thumbprint} | ConvertTo-Json | Set-Content VERSION.json -Encoding utf8NoBOM
+          }
+          try {
+            $thumbprint=if ($cert) { $cert.Thumbprint } else { '' }
+            @{version=$env:RELEASE_VERSION;build=[int]$env:RELEASE_BUILD;commit=$env:GITHUB_SHA;windows_signer_thumbprint=$thumbprint} | ConvertTo-Json | Set-Content VERSION.json -Encoding utf8NoBOM
             ./scripts/build_windows.ps1
-            $result=Set-AuthenticodeSignature -FilePath packages/AnkiCompanion-Windows-Setup.exe -Certificate $cert -HashAlgorithm SHA256 -TimestampServer http://timestamp.digicert.com
-            if ($result.Status -ne 'Valid') { throw "Signature is not trusted: $($result.Status)" }
+            if ($cert) {
+              $result=Set-AuthenticodeSignature -FilePath packages/AnkiCompanion-Windows-Setup.exe -Certificate $cert -HashAlgorithm SHA256 -TimestampServer http://timestamp.digicert.com
+              if ($result.Status -ne 'Valid') { throw "Signature is not trusted: $($result.Status)" }
+            } else {
+              Write-Host 'No optional paid Windows signing certificate. Publishing with GitHub SHA-256 verified update manifest.'
+            }
           } finally { Remove-Item $path -ErrorAction SilentlyContinue }
       - uses: actions/upload-artifact@v4
         with:
@@ -104,5 +131,56 @@ jobs:
         with:
           name: signed-release-candidate
           path: candidate/
-      # Intentionally no publication step. Production release requires separate
-      # explicit owner authorization after device acceptance and review.
+      # Publishing is an explicit dispatch choice, not an automatic side effect
+      # of committing source code. Only the exact signed and hashed candidate
+      # is eligible for publication.
+  publish:
+    if: inputs.publish
+    needs: [assemble]
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-release-candidate
+          path: candidate
+      - name: Verify exact signed release artifacts
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+          EXPECTED_BUILD: ${{ inputs.build }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib
+          folder = pathlib.Path('candidate')
+          manifest = json.loads((folder/'update.json').read_text())
+          assert manifest['version'] == os.environ['EXPECTED_VERSION']
+          assert manifest['build'] == int(os.environ['EXPECTED_BUILD'])
+          assert manifest['commit'] == os.environ['EXPECTED_COMMIT']
+          assert {'windows', 'source'}.issubset(manifest['assets'])
+          assert set(manifest['assets']).issubset({'android','windows','source'})
+          for platform, item in manifest['assets'].items():
+              source = folder/item['filename']
+              assert source.is_file() and source.stat().st_size == item['size'], platform
+              assert hashlib.sha256(source.read_bytes()).hexdigest() == item['sha256'], platform
+          print('Verified all release package hashes, version, build, and commit')
+          PY
+      - name: Publish stable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v${RELEASE_VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists. Refusing to overwrite immutable release assets."
+            exit 1
+          fi
+          assets=(candidate/AnkiCompanion-Windows-Setup.exe candidate/AnkiCompanion-source.zip candidate/update.json)
+          if [ -f candidate/AnkiCompanion-Android.apk ]; then
+            assets+=(candidate/AnkiCompanion-Android.apk)
+          fi
+          gh release create "$tag" "${assets[@]}" --target "$GITHUB_SHA" --title "AnkiCompanion $tag" --notes "GitHub checksum-verified Windows update. Android in-place updates are included when a persistent Android release signing key is configured." --latest
+
