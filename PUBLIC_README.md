@@ -1,5 +1,13 @@
 # AnkiCompanion
 
+## Final October 31 CI / personal package status
+
+The corrected AnkiDroid reviewer-startup code at [bca4582](https://github.com/ldf97/AnkiCompanion/commit/bca4582fb65d008e85c500165b002b20cffbd065) **passed all six jobs** in [run 41132639476](https://github.com/ldf97/AnkiCompanion/actions/runs/41132639476), including the full 20 desktop → 10 phone → 20 desktop native synchronization test, 50 distinct reviews, matching tested scheduling fields, and automatically observed 30/50 and 50/50 on both platforms. The earlier dock-era rerun [41130929265](https://github.com/ldf97/AnkiCompanion/actions/runs/41130929265) had failed because of the initial reviewer WebView race; this has been corrected and retested.
+
+A **separately delivered personal Eren-ready bundle** now includes the original 30 image/skin files and 19 quotes, the working Windows installer, both Android APKs, the Anki desktop add-on, a one-click Windows import/activation wrapper, and passing CI evidence. The owner does **not** need to reacquire the artwork or start with a blank theme. This public repository intentionally does not publish the original private art/quotes or user credentials.
+
+The personal wrapper's authenticated skin import/export/activation test passed; the device-specific Windows PowerShell launcher itself, owner's actual phone/launcher, AnkiWeb and Tailscale pairing, offline/screen-off behavior and production signing/in-place updates remain unverified. Exact-record redo after an undo is not implemented end-to-end. **No production release is published.** The passing native APK is a debug build and may have a different signature from an installed development APK.
+
 AnkiCompanion provides a native Windows app and compact dock, Android app and home-screen widget, FastAPI/SQLite server, Anki desktop add-on, and separate AnkiDroid Companion edition. Closing the desktop window opens the dock; Open restores it. The original hollow/lit tray flame has the streak number BELOW it.
 
 ## Install
