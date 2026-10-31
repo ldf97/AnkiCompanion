@@ -1,12 +1,13 @@
 name: Build and verify
 on:
   workflow_call:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   python:
     runs-on: ubuntu-24.04
