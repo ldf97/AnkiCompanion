@@ -42,13 +42,37 @@ object Sync {
             catch(e:Exception){store.setSetting("bridge_status","AnkiDroid review-history bridge unavailable; desktop reports phone reviews after collection sync")}
             try {
                 outbox.send(api,store.deviceId)
-                if(AnkiBridge.permitted(context))api.json("/v1/snapshots","POST",JSONObject().put("device_id",store.deviceId).put("label","Android phone").put("decks",JSONArray(AnkiBridge.decks(context))).put("sync_status",AnkiBridge.capabilities(context)?.getString("sync_status") ?: "Bridge unavailable").put("collection_synced_ms",AnkiBridge.capabilities(context)?.getLong("synced_ms") ?: 0))
-                val state=api.json("/v1/state");val lineup=state.getJSONObject("lineup")
+                val collectionId=config.optString("collection_id","primary")
+                fun announceNative(applied:Long) {
+                    if(!AnkiBridge.permitted(context))return
+                    val cap=AnkiBridge.capabilities(context)
+                    api.json("/v1/snapshots","POST",JSONObject().put("device_id",store.deviceId)
+                        .put("collection_id",collectionId).put("applied_revision",applied)
+                        .put("label","Android phone").put("decks",JSONArray(AnkiBridge.decks(context)))
+                        .put("sync_status",cap?.getString("sync_status") ?: "Bridge unavailable")
+                        .put("collection_synced_ms",cap?.getLong("synced_ms") ?: 0))
+                }
+                val applied=store.getSetting("native_applied_revision","0").toLongOrNull() ?: 0L
+                announceNative(applied)
+                val state=api.json("/v1/state?device_id="+store.deviceId);val lineup=state.getJSONObject("lineup")
                 Skins(context).ensure(api,lineup.getString("skin_id"),lineup.getString("skin_version"))
-                store.save("commands.json",api.json("/v1/commands/"+store.deviceId));
+                store.save("commands.json",api.json("/v1/commands/"+store.deviceId))
                 Commands.notify(context)
                 store.save("state.json",state);store.setSetting("sync_error","")
                 AnkiBridge.configure(context,state.getJSONObject("settings"))
+                CompanionWidget.refresh(context)
+                val pending=state.optJSONObject("native_sync")
+                if(pending?.optBoolean("pending")==true) {
+                    try {
+                        // This runs on Sync.executor, never the AnkiDroid reviewer UI.
+                        AnkiBridge.synchronize(context)
+                        val revision=pending.getLong("revision")
+                        store.setSetting("native_applied_revision",revision.toString())
+                        announceNative(revision)
+                    } catch(e:Exception) {
+                        store.setSetting("bridge_status","Native collection update pending: "+(e.message ?: "Sync unavailable"))
+                    }
+                }
                 try {Updates.check(context,api)}catch(e:Exception){store.setSetting("update_error",e.message ?: "Update check failed")}
                 CompanionWidget.refresh(context)
                 return outbox.overlay(state)
