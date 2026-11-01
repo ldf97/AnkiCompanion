@@ -69,5 +69,11 @@ class SyncJob:JobService() {
 }
 
 class RefreshReceiver:BroadcastReceiver() {
-    override fun onReceive(context:Context,intent:Intent){Sync.schedule(context);Sync.schedule(context,true)}
+    override fun onReceive(context:Context,intent:Intent){
+        // Rebind launcher widget PendingIntents immediately after an APK update;
+        // do not leave the old, sync-blocking widget tap active until next poll.
+        CompanionWidget.refresh(context)
+        Sync.schedule(context)
+        Sync.schedule(context,true)
+    }
 }
