@@ -1,5 +1,5 @@
 """Anki hooks run on the GUI thread; only network/outbox I/O runs in the worker."""
-import json, time, uuid, threading, sqlite3
+import json, time, uuid, threading, sqlite3, os
 from pathlib import Path
 from aqt import mw, gui_hooks
 from aqt.qt import QTimer
@@ -12,6 +12,19 @@ NAME=__name__; controller=None
 class Bridge:
     def __init__(self):
         self.config=mw.addonManager.getConfig(NAME) or {}
+        # The Windows companion bootstraps the local server. Never require
+        # the owner to manually transcribe its private token into Anki's addon.
+        if not self.config.get('token'):
+            local=Path(os.environ.get('LOCALAPPDATA') or
+                (Path.home()/'AppData'/'Local'))/'AnkiCompanion'/'server'/'token.txt'
+            try:
+                token=local.read_text(encoding='utf-8').strip()
+                if len(token)>=16:
+                    self.config['token']=token
+                    self.config['server_url']='http://127.0.0.1:8765'
+                    self.config['allow_lan_http']=False
+            except OSError:
+                pass
         if not self.config.get('device_id'):
             self.config['device_id']='desktop-'+uuid.uuid4().hex
             mw.addonManager.writeConfig(NAME,self.config)

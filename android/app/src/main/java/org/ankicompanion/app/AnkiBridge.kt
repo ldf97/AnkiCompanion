@@ -65,7 +65,8 @@ object AnkiBridge {
         if(ids!=null)builder.appendQueryParameter("ids",ids.joinToString(","))
         val cursor=context.contentResolver.query(builder.build(),null,null,null,null) ?: error("AnkiDroid review history is unavailable")
         cursor.use {c->while(c.moveToNext())out.add(JSONObject().put("revlog_id",c.getLong(c.getColumnIndexOrThrow("id")))
-            .put("card_id",c.getLong(c.getColumnIndexOrThrow("cid"))).put("duration_ms",c.getInt(c.getColumnIndexOrThrow("time")).coerceIn(0,600000)))}
+            .put("card_id",c.getLong(c.getColumnIndexOrThrow("cid"))).put("duration_ms",c.getInt(c.getColumnIndexOrThrow("time")).coerceIn(0,600000))
+            .put("rating",c.getInt(c.getColumnIndexOrThrow("ease"))))}
         return out
     }
     fun configure(context:Context,settings:JSONObject):Boolean {

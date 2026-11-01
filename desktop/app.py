@@ -154,7 +154,7 @@ class Window(QMainWindow):
             self._bootstrapping=False
             self.config={k:value[k] for k in ('url','token','allow_lan_http')}
             write_json(self.config_path,self.config,private=True)
-            self.status.setText(value['skin_message'])
+            self.status.setText(value['skin_message']+' · '+value.get('bridge_message',''))
             self.refresh()
         job=self.launch(first_run.bootstrap,ready)
         job.failed.connect(lambda _:setattr(self,'_bootstrapping',False))

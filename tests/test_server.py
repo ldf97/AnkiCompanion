@@ -33,6 +33,22 @@ def test_duplicate_reviews_from_two_devices(client):
     assert state['completed'] and state['streak']==1
     assert state['progress']['answers']==10 and state['progress']['duration_ms']==300000
 
+def test_review_rating_persists_and_old_client_can_enrich_without_double_count(client):
+    review = event()
+    old = client.post('/v1/events', json={'device_id':'old-phone', 'events':[review]})
+    assert old.status_code == 200 and old.json()['inserted'] == 1
+    newer = dict(review, rating=3)
+    updated = client.post('/v1/events', json={'device_id':'desktop', 'events':[newer]})
+    assert updated.status_code == 200 and updated.json()['inserted'] == 0
+    stored = client.app.state.store
+    with stored.tx() as db:
+        row = db.execute('SELECT payload FROM events WHERE id=?',
+                         (f"primary:{review['revlog_id']}:{review['card_id']}",)).fetchone()
+        assert json.loads(row['payload'])['rating'] == 3
+    assert client.get('/v1/state').json()['progress']['answers'] == 1
+    assert client.post('/v1/events', json={'events':[dict(newer, rating=4)]}).status_code == 409
+
+
 def test_completion_needs_both_thresholds(client):
     client.post('/v1/events',json={'events':[event(i,1000,i+1) for i in range(10)]})
     assert not client.get('/v1/state').json()['completed']

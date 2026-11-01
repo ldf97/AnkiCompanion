@@ -17,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,6 +27,7 @@ object CompanionIntegration {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
     private val queued = AtomicBoolean(false)
+    private val requested = AtomicBoolean(false)
     @Volatile private var app: Context? = null
     private fun prefs() = app!!.getSharedPreferences("companion_bridge", Context.MODE_PRIVATE)
     fun initialize(context: Context) { app = context.applicationContext }
@@ -63,9 +65,23 @@ object CompanionIntegration {
     }
 
     fun requestSync(): Bundle {
-        if (enabled() && queued.compareAndSet(false, true)) {
-            prefs().edit().putString("sync_status", "syncing").apply()
-            scope.launch { try { synchronize() } finally { queued.set(false) } }
+        if (!enabled()) return status()
+        // Never await collection/network I/O in the reviewer. Coalesce bursts;
+        // a review arriving during an active sync must trigger another pass.
+        requested.set(true)
+        if (queued.compareAndSet(false, true)) {
+            scope.launch {
+                try {
+                    do {
+                        delay(750)
+                        requested.set(false)
+                        synchronize()
+                    } while (requested.get())
+                } finally {
+                    queued.set(false)
+                    if (requested.get()) requestSync()
+                }
+            }
         }
         return status()
     }
@@ -106,7 +122,7 @@ object CompanionIntegration {
 
     suspend fun isCurrent(card: com.ichi2.anki.libanki.Card): Boolean {
         if (!enabled()) return true
-        synchronize(notifyUi = false)
+        // Compare local card state without forcing network I/O before every answer.
         return withCol {
             val latest = getCard(card.id)
             latest.reps == card.reps && latest.mod == card.mod && latest.queue == card.queue && latest.due == card.due
@@ -115,8 +131,7 @@ object CompanionIntegration {
 
     suspend fun beforeReview() {
         if (!enabled()) return
-        changed()
-        synchronize(notifyUi = false)
+        // The answer-commit hook handles outgoing sync; never gate the next question.
         withCol {
             val parentId = prefs().getString("parent_deck_id", "")?.toLongOrNull() ?: return@withCol
             val tree = sched.deckDueTree()
@@ -140,13 +155,13 @@ object CompanionIntegration {
         val since = uri.getQueryParameter("since")?.toLongOrNull()?.coerceAtLeast(0) ?: 0
         val limit = (uri.getQueryParameter("limit")?.toIntOrNull() ?: 1000).coerceIn(1, 1000)
         withCol {
-            val result = MatrixCursor(arrayOf("id", "cid", "time"))
+            val result = MatrixCursor(arrayOf("id", "cid", "time", "ease"))
             val ids = uri.getQueryParameter("ids")?.split(",")?.map { it.toLong() }
             require(ids == null || ids.size in 1..300)
-            val cursor = if (ids == null) db.query("SELECT id,cid,time FROM revlog WHERE id>=? AND ease>0 ORDER BY id LIMIT ?", since, limit)
-                else db.query("SELECT id,cid,time FROM revlog WHERE ease>0 AND id IN (" + ids.joinToString(",") { "?" } + ")", *ids.toTypedArray())
+            val cursor = if (ids == null) db.query("SELECT id,cid,time,ease FROM revlog WHERE id>=? AND ease>0 ORDER BY id LIMIT ?", since, limit)
+                else db.query("SELECT id,cid,time,ease FROM revlog WHERE ease>0 AND id IN (" + ids.joinToString(",") { "?" } + ")", *ids.toTypedArray())
             cursor.use {
-                while (it.moveToNext()) result.addRow(arrayOf<Any>(it.getLong(0), it.getLong(1), it.getInt(2)))
+                while (it.moveToNext()) result.addRow(arrayOf<Any>(it.getLong(0), it.getLong(1), it.getInt(2), it.getInt(3)))
             }
             result
         }
