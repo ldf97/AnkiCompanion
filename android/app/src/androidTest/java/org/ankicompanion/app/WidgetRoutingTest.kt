@@ -25,6 +25,17 @@ class WidgetRoutingTest {
         assertFalse("Widget must not wait for companion app native sync",launch.hasExtra("study"))
     }
 
+    @Test fun widgetTapPrefersNextEligibleEicosanoidsChildDeckOverParent() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val phoneId=Storage(context).deviceId
+        val state=JSONObject().put("settings",JSONObject().put("parent_deck_id","42"))
+            .put("next_decks",JSONObject().put(phoneId,
+                JSONObject().put("id","987654321").put("name","M2::Eicosanoids")))
+        val launch=CompanionWidget.widgetIntent(context,state,target)
+        assertEquals("com.ichi2.anki.IntentHandler",launch.component?.className)
+        assertEquals(987654321L,launch.getLongExtra("EXTRA_DECK_ID",-1))
+    }
+
     @Test fun widgetTapWithoutSelectedDeckExplainsSetupInsteadOfSilentlyDoingNothing() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val state=JSONObject().put("settings",JSONObject().put("parent_deck_id",""))
