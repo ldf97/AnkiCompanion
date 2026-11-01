@@ -60,7 +60,7 @@ jobs:
           # Failed CI attempts are NOT published releases. Choose the next
           # actual semantic version rather than consuming a version on failure.
           latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name' 2>/dev/null || echo 'v1.0.0')"
-          if [[ ! "$latest" =~ ^v1\\.0\\.([0-9]+)$ ]]; then
+          if [[ ! "$latest" =~ ^v1\.0\.([0-9]+)$ ]]; then
             echo "Unexpected latest release tag: $latest" >&2
             exit 1
           fi
