@@ -19,11 +19,12 @@ CloseApplications=yes
 RestartApplications=yes
 UninstallDisplayIcon={app}\desktop\AnkiCompanion.exe
 [Tasks]
-Name: "serverstartup"; Description: "Start the companion server when I sign in"; Flags: unchecked
+Name: "serverstartup"; Description: "Start the companion server when I sign in"
 [Files]
 Source: "..\dist\AnkiCompanion\*"; DestDir: "{app}\desktop"; Flags: recursesubdirs ignoreversion
 Source: "..\dist\AnkiCompanionServer\*"; DestDir: "{app}\server"; Flags: recursesubdirs ignoreversion
 Source: "..\deployment\*"; DestDir: "{app}\deployment"; Flags: recursesubdirs ignoreversion
+Source: "..\deployment\cloudflared.exe"; DestDir: "{app}\tools"; Flags: ignoreversion
 Source: "..\packages\Anki_Companion_Bridge.ankiaddon"; DestDir: "{app}"
 [Icons]
 Name: "{group}\AnkiCompanion"; Filename: "{app}\desktop\AnkiCompanion.exe"
