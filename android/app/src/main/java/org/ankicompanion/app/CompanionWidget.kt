@@ -26,10 +26,30 @@ class CompanionWidget:AppWidgetProvider() {
                 manager.updateAppWidget(ids,fallback)
             }
         }
+        /** Explicit AnkiDroid REVIEW intent, not AnkiCompanion's slow sync screen.
+         *  AnkiDroid IntentHandler recognizes EXTRA_DECK_ID on ACTION_MAIN and
+         *  enters the reviewer directly, using its own local collection.
+         */
+        fun reviewerIntent(targetPackage:String,deckId:Long):Intent =
+            Intent(Intent.ACTION_MAIN)
+                .setClassName(targetPackage,"com.ichi2.anki.IntentHandler")
+                .putExtra("EXTRA_DECK_ID",deckId)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+
+        fun widgetIntent(context:Context,state:org.json.JSONObject?,targetPackage:String?=null):Intent {
+            val deckId=state?.optJSONObject("settings")?.optString("parent_deck_id")
+                ?.toLongOrNull()?.takeIf{it>0}
+            val target=targetPackage ?: try{AnkiBridge.packageName(context)}catch(_:Exception){null}
+            return if(deckId!=null && target!=null)reviewerIntent(target,deckId)
+                else Intent(context,MainActivity::class.java)
+                    .putExtra("widget_setup",true)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+
         fun buildViews(context:Context,state:org.json.JSONObject?):RemoteViews {
             val store=Storage(context)
             val views=RemoteViews(context.packageName,R.layout.widget)
-            val intent=Intent(context,MainActivity::class.java).putExtra("study",true)
+            val intent=widgetIntent(context,state)
             views.setOnClickPendingIntent(R.id.widget_root,PendingIntent.getActivity(context,10,intent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
             if(state!=null) {
                 val local=Outbox(context).use{it.overlay(state)};val lineup=state.getJSONObject("lineup")
@@ -51,7 +71,10 @@ class CompanionWidget:AppWidgetProvider() {
                 val count=p.getInt("answers");val label="$count/$goal · ${minOf(100,count*100/goal)}% · ${maxOf(0,goal-count)} remaining"
                 val stale=System.currentTimeMillis()-state.getLong("server_time_ms")>120000
                 val update=store.load("update.json")?.optBoolean("available")==true
-                views.setTextViewText(R.id.widget_status,label+if(update)" · Update available" else if(stale)" · Cached" else " · Tap to study")
+                // Never hide the study affordance behind an update notice.
+                val configured=state.optJSONObject("settings")?.optString("parent_deck_id")?.isNotBlank()==true
+                val instruction=if(configured)" · Tap to study" else " · Select a parent deck in app"
+                views.setTextViewText(R.id.widget_status,label+instruction+if(update)" · Update available" else if(stale)" · Cached" else "")
                 frame.image.recycle();frame.badge.recycle()
             }
             return views
