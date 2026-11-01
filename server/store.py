@@ -93,7 +93,21 @@ class Store:
                 db.execute('INSERT OR REPLACE INTO event_sources VALUES (?,?,?)',(event.key,device_id,now_ms))
                 row = db.execute('SELECT payload FROM events WHERE id=?', (event.key,)).fetchone()
                 if row:
-                    if row['payload'] != payload: raise Conflict('Event ID reused with different contents')
+                    # An older installation may have submitted a review without
+                    # its rating. Enrich that record when a newer sender reports
+                    # the same review; never count the same review twice.
+                    previous = json.loads(row['payload'])
+                    current = json.loads(payload)
+                    for field in ('collection_id','revlog_id','card_id','duration_ms'):
+                        if previous.get(field) != current.get(field):
+                            raise Conflict('Event ID reused with different contents')
+                    old_rating = previous.get('rating')
+                    new_rating = current.get('rating')
+                    if old_rating is not None and new_rating is not None and old_rating != new_rating:
+                        raise Conflict('Event rating conflicts with existing review')
+                    if old_rating is None and new_rating is not None:
+                        previous['rating'] = new_rating
+                        db.execute('UPDATE events SET payload=? WHERE id=?', (json.dumps(previous),event.key))
                     continue
                 day = study_day(event.revlog_id, settings['timezone'], settings['rollover_minute'])
                 self._day(db, day, packs)
