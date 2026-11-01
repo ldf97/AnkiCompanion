@@ -19,7 +19,7 @@ from companion.transport import Client
 
 EREN_SHA256 = "7c25d1434b9971ea89193be60a665b18c0a5ed9be66fa4f92c36c94752dce412"
 CLOUDFLARED_SHA256 = "547057326266f0e1c7d50d102dbd22ff283d740c055bd61e94f10e2c606f89af"
-PAIRING_HOST = re.compile(r"^https://[a-z0-9-]+\\.trycloudflare\\.com$")
+PAIRING_HOST = re.compile(r"^https://[a-z0-9-]+\.trycloudflare\.com$")
 LOCAL_URL = "http://127.0.0.1:8765"
 
 
@@ -207,7 +207,7 @@ def pair_phone():
             output = log_path.read_text(encoding="utf-8", errors="replace")[-12000:]
         except OSError:
             output = ""
-        for url in re.findall(r"https://[a-z0-9-]+\\.trycloudflare\\.com", output):
+        for url in re.findall(r"https://[a-z0-9-]+\.trycloudflare\.com", output):
             if PAIRING_HOST.fullmatch(url) and (url not in attempted or time.monotonic() > deadline - 60):
                 attempted.add(url)
                 if _healthy(url, timeout=3):
