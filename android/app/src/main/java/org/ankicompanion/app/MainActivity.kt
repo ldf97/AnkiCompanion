@@ -56,6 +56,11 @@ class MainActivity:Activity() {
         Sync.schedule(this)
         storage.load("state.json")?.let{show(it)}
         if(intent.getBooleanExtra("updates",false))handler.post{updates()}
+        if(intent.getBooleanExtra("widget_setup",false))handler.post{
+            AlertDialog.Builder(this).setTitle("Choose the widget's study deck")
+                .setMessage("Select Eicosanoids (or your preferred deck) under Parent deck, then tap Save deck settings. The widget will open that exact deck in AnkiDroid when tapped.")
+                .setPositiveButton("OK",null).show()
+        }
     }
     override fun onResume(){super.onResume();resumed=true;handler.removeCallbacks(ticker);handler.post(ticker)}
     override fun onPause(){resumed=false;handler.removeCallbacks(ticker);super.onPause()}
