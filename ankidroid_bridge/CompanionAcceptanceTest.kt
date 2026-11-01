@@ -2,17 +2,11 @@
 package com.ichi2.anki
 
 import androidx.test.core.app.ActivityScenario
-import androidx.test.espresso.Espresso.onView
-import androidx.test.espresso.action.ViewActions.click
-import androidx.test.espresso.assertion.ViewAssertions.matches
-import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
-import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.ichi2.anki.CollectionManager.withCol
 import com.ichi2.anki.previewer.CardViewerActivity
 import com.ichi2.anki.settings.Prefs
 import com.ichi2.anki.tests.InstrumentedTest
-import com.ichi2.anki.tests.checkWithTimeout
 import com.ichi2.anki.ui.windows.reviewer.ReviewerFragment
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
@@ -60,6 +54,29 @@ class CompanionAcceptanceTest : InstrumentedTest() {
         }
         return done.await(3,TimeUnit.SECONDS) && ready.get()
     }
+    /**
+     * Espresso's RootViewPicker intermittently cannot find the reviewer window
+     * even after onResume and a fully loaded WebView on API 35 emulators.
+     * Interact with the actual visible UI buttons on the Activity's main
+     * thread, still exercising their real listeners and native Anki scheduler.
+     */
+    private fun clickVisible(scenario:ActivityScenario<CardViewerActivity>, id:Int, label:String) {
+        val deadline=System.currentTimeMillis()+30000L
+        var last="not found"
+        while(System.currentTimeMillis()<deadline) {
+            val pressed=AtomicBoolean(false)
+            scenario.onActivity { activity ->
+                val view=activity.findViewById<View>(id)
+                last=if(view==null)"not found" else
+                    "shown=${view.isShown}, enabled=${view.isEnabled}, visibility=${view.visibility}"
+                if(view!=null && view.isShown && view.isEnabled)pressed.set(view.performClick())
+            }
+            if(pressed.get())return
+            Thread.sleep(100)
+        }
+        throw AssertionError("Reviewer $label button was not ready after 30 seconds ($last)")
+    }
+
     @Test fun desktop20Phone10Desktop20() = runBlocking {
         val auth=withCol{syncLogin("fixture","temporary-test-password","http://10.0.2.2:8767/")}
         Prefs.hkey=auth.hkey;Prefs.currentSyncUri="http://10.0.2.2:8767/";Prefs.isNewStudyScreenEnabled=true
@@ -79,10 +96,8 @@ class CompanionAcceptanceTest : InstrumentedTest() {
                 // Read the visible card before pressing Show Answer. Button
                 // presence alone does not prove the initial WebView has loaded.
                 awaitCondition("Question did not finish rendering"){questionRendered(scenario)}
-                onView(withId(R.id.show_answer_button)).checkWithTimeout(matches(isDisplayed()),100,30000)
-                onView(withId(R.id.show_answer_button)).perform(click())
-                onView(withId(R.id.easy_button)).checkWithTimeout(matches(isDisplayed()),100,30000)
-                onView(withId(R.id.easy_button)).perform(click())
+                clickVisible(scenario,R.id.show_answer_button,"Show Answer")
+                clickVisible(scenario,R.id.easy_button,"Easy")
                 awaitCondition("Review $index was not saved"){runBlocking{withCol{db.queryScalar("SELECT COUNT(*) FROM revlog WHERE ease>0")}}>=21+index}
             }
         }
