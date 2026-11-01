@@ -76,7 +76,7 @@ object AnkiBridge {
         return context.contentResolver.call(root(context),"companion.configure",null,options)?.getBoolean("enabled")==true
     }
     fun open(context:Context,deckId:String) {
-        context.startActivity(Intent(Intent.ACTION_VIEW).setClassName(packageName(context),"com.ichi2.anki.IntentHandler")
+        context.startActivity(Intent(Intent.ACTION_MAIN).setClassName(packageName(context),"com.ichi2.anki.IntentHandler")
             .putExtra("EXTRA_DECK_ID",deckId.toLong()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }

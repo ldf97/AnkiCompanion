@@ -56,6 +56,11 @@ class MainActivity:Activity() {
         Sync.schedule(this)
         storage.load("state.json")?.let{show(it)}
         if(intent.getBooleanExtra("updates",false))handler.post{updates()}
+        if(intent.getBooleanExtra("widget_setup",false))handler.post{
+            AlertDialog.Builder(this).setTitle("Choose the widget's study deck")
+                .setMessage("Choose your parent deck (for example, the parent containing Eicosanoids), then tap Save deck settings. The widget will open the next eligible subdeck, or the parent when no child is due.")
+                .setPositiveButton("OK",null).show()
+        }
     }
     override fun onResume(){super.onResume();resumed=true;handler.removeCallbacks(ticker);handler.post(ticker)}
     override fun onPause(){resumed=false;handler.removeCallbacks(ticker);super.onPause()}
