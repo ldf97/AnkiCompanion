@@ -50,7 +50,10 @@ class CompanionWidget:AppWidgetProvider() {
             val store=Storage(context)
             val views=RemoteViews(context.packageName,R.layout.widget)
             val intent=widgetIntent(context,state)
-            views.setOnClickPendingIntent(R.id.widget_root,PendingIntent.getActivity(context,10,intent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+            val tap=PendingIntent.getActivity(context,10,intent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            // Launcher and widget hosts vary in whether child views consume touches.
+            for(viewId in intArrayOf(R.id.widget_root,R.id.widget_image,R.id.widget_status,R.id.widget_warning))
+                views.setOnClickPendingIntent(viewId,tap)
             if(state!=null) {
                 val local=Outbox(context).use{it.overlay(state)};val lineup=state.getJSONObject("lineup")
                 val frame=Renderer(context).draw(local,Skins(context).directory(lineup.getString("skin_id"),lineup.getString("skin_version")),false)
