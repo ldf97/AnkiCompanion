@@ -48,11 +48,24 @@ jobs:
     if: needs.decide.outputs.needed == 'true'
     runs-on: ubuntu-24.04
     outputs:
+      version: ${{ steps.set.outputs.version }}
       build: ${{ steps.set.outputs.build }}
     steps:
       - id: set
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
-        run: echo "build=$((1000000+GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          # Failed CI attempts are NOT published releases. Choose the next
+          # actual semantic version rather than consuming a version on failure.
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name' 2>/dev/null || echo 'v1.0.0')"
+          if [[ ! "$latest" =~ ^v1\\.0\\.([0-9]+)$ ]]; then
+            echo "Unexpected latest release tag: $latest" >&2
+            exit 1
+          fi
+          echo "version=1.0.$((${BASH_REMATCH[1]}+1))" >> "$GITHUB_OUTPUT"
+          echo "build=$((1000000+GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
   release:
     needs: [decide, verify, version]
     if: needs.decide.outputs.needed == 'true'
@@ -60,7 +73,7 @@ jobs:
     permissions:
       contents: write
     with:
-      version: 1.0.${{ github.run_number }}
+      version: ${{ needs.version.outputs.version }}
       build: ${{ fromJSON(needs.version.outputs.build) }}
       publish: true
     secrets: inherit
