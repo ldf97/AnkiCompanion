@@ -23,6 +23,12 @@ class Store:
             CREATE TABLE IF NOT EXISTS snapshots(device TEXT PRIMARY KEY, payload TEXT NOT NULL, updated INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY, device TEXT NOT NULL,
                 payload TEXT NOT NULL, created INTEGER NOT NULL, acknowledged INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS sync_versions(collection TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS sync_receipts(collection TEXT NOT NULL, device TEXT NOT NULL,
+                revision INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(collection,device));
+            CREATE TABLE IF NOT EXISTS sync_pending(collection TEXT NOT NULL, device TEXT NOT NULL,
+                dirty INTEGER NOT NULL DEFAULT 0, latest_event_ms INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(collection,device));
             ''')
             db.execute('INSERT OR IGNORE INTO meta VALUES (?,?)', ('settings', Settings(revision=0).model_dump_json()))
             db.execute('INSERT OR IGNORE INTO meta VALUES (?,?)', ('seed', secrets.token_hex(24)))
@@ -113,6 +119,14 @@ class Store:
                 self._day(db, day, packs)
                 undone = bool(db.execute('SELECT 1 FROM tombstones WHERE id=?', (event.key,)).fetchone())
                 db.execute('INSERT INTO events VALUES (?,?,?,?,?)', (event.key, payload, day, event.duration_ms, int(undone)))
+                # A new review is a local collection mutation, not proof that
+                # its native Anki sync has succeeded yet. Wait for a newer
+                # successful source snapshot before notifying other devices.
+                db.execute("""INSERT INTO sync_pending(collection,device,dirty,latest_event_ms)
+                              VALUES (?,?,1,?)
+                              ON CONFLICT(collection,device) DO UPDATE SET
+                                dirty=1, latest_event_ms=MAX(latest_event_ms,excluded.latest_event_ms)""",
+                           (event.collection_id, device_id, event.revlog_id))
                 inserted += 1
             return dict(inserted=inserted, received=len(events))
 
@@ -127,6 +141,41 @@ class Store:
         with self.tx() as db:
             db.execute('INSERT OR REPLACE INTO snapshots VALUES (?,?,?)',
                 (snapshot.device_id, snapshot.model_dump_json(), now_ms))
+            collection = snapshot.collection_id
+            synced = snapshot.sync_status in ('synced', 'native Anki sync') and snapshot.collection_synced_ms > 0
+            if synced:
+                pending = db.execute('SELECT dirty,latest_event_ms FROM sync_pending WHERE collection=? AND device=?',
+                                     (collection, snapshot.device_id)).fetchone()
+                # A stale device snapshot must not announce reviews which
+                # have not yet reached Anki's native sync service.
+                if pending and pending['dirty'] and snapshot.collection_synced_ms >= pending['latest_event_ms']:
+                    db.execute('INSERT OR IGNORE INTO sync_versions VALUES (?,0)',(collection,))
+                    db.execute('UPDATE sync_versions SET revision=revision+1 WHERE collection=?',(collection,))
+                    revision=db.execute('SELECT revision FROM sync_versions WHERE collection=?',(collection,)).fetchone()[0]
+                    db.execute('UPDATE sync_pending SET dirty=0 WHERE collection=? AND device=?',
+                               (collection,snapshot.device_id))
+                    # The source already knows its own changes; do not notify it
+                    # redundantly. Other devices remain pending until acked.
+                    db.execute('''INSERT INTO sync_receipts VALUES (?,?,?)
+                                  ON CONFLICT(collection,device) DO UPDATE SET revision=MAX(revision,excluded.revision)''',
+                               (collection,snapshot.device_id,revision))
+                if snapshot.applied_revision:
+                    # A device only acknowledges a revision after native Anki
+                    # confirmed collection synchronization succeeded.
+                    latest=db.execute('SELECT revision FROM sync_versions WHERE collection=?',(collection,)).fetchone()
+                    accepted=min(snapshot.applied_revision,latest[0] if latest else 0)
+                    db.execute('''INSERT INTO sync_receipts VALUES (?,?,?)
+                                  ON CONFLICT(collection,device) DO UPDATE SET revision=MAX(revision,excluded.revision)''',
+                               (collection,snapshot.device_id,accepted))
+
+    def native_sync_status(self, device_id, collection='primary'):
+        with self.tx() as db:
+            row=db.execute('SELECT revision FROM sync_versions WHERE collection=?',(collection,)).fetchone()
+            revision=row['revision'] if row else 0
+            own=db.execute('SELECT revision FROM sync_receipts WHERE collection=? AND device=?',
+                           (collection,device_id)).fetchone() if device_id else None
+            applied=own['revision'] if own else 0
+            return dict(revision=revision,applied_revision=applied,pending=revision>applied)
 
     def state(self, packs, now_ms):
         with self.tx() as db:
