@@ -58,7 +58,7 @@ class MainActivity:Activity() {
         if(intent.getBooleanExtra("updates",false))handler.post{updates()}
         if(intent.getBooleanExtra("widget_setup",false))handler.post{
             AlertDialog.Builder(this).setTitle("Choose the widget's study deck")
-                .setMessage("Select Eicosanoids (or your preferred deck) under Parent deck, then tap Save deck settings. The widget will open that exact deck in AnkiDroid when tapped.")
+                .setMessage("Choose your parent deck (for example, the parent containing Eicosanoids), then tap Save deck settings. The widget will open the next eligible subdeck, or the parent when no child is due.")
                 .setPositiveButton("OK",null).show()
         }
     }
