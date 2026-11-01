@@ -10,6 +10,7 @@ from companion.packs import Packs
 from companion.rules import scene, daily_lineup, study_day, lesson_progress
 from app.widget_engine import WidgetEngine
 from companion import updates
+from desktop import bootstrap as first_run
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -137,7 +138,26 @@ class Window(QMainWindow):
         self.update_timer=QTimer(self);self.update_timer.timeout.connect(lambda:self.check_updates(False))
         if autostart:self.update_timer.start(15*60*1000);QTimer.singleShot(3000,lambda:self.check_updates(False))
         self.timer=QTimer(self);self.timer.timeout.connect(self.refresh)
-        if autostart:self.timer.start(5000);QTimer.singleShot(0,self.refresh)
+        if autostart:
+            self.timer.start(5000)
+            if sys.platform == 'win32':
+                QTimer.singleShot(0,self.bootstrap_local)
+            else:
+                QTimer.singleShot(0,self.refresh)
+
+    def bootstrap_local(self):
+        """Self-repair in an ordinary background app worker; no user commands."""
+        if getattr(self,'_bootstrapping',False):return
+        self._bootstrapping=True
+        self.status.setText('Connecting to your local AnkiCompanion server…')
+        def ready(value):
+            self._bootstrapping=False
+            self.config={k:value[k] for k in ('url','token','allow_lan_http')}
+            write_json(self.config_path,self.config,private=True)
+            self.status.setText(value['skin_message'])
+            self.refresh()
+        job=self.launch(first_run.bootstrap,ready)
+        job.failed.connect(lambda _:setattr(self,'_bootstrapping',False))
 
     def client(self):return Client(self.config.get('url','http://127.0.0.1:8765'),self.config.get('token',''),self.config.get('allow_lan_http',False))
     def launch(self,fn,success=None):
@@ -218,19 +238,18 @@ class Window(QMainWindow):
         if int(time.time()*1000)-device['updated_ms']>120000:self.status.setText('Study device is offline. Open Anki on that device and refresh.');return
         self.launch(lambda:self.client().request('/v1/commands','POST',dict(device_id=identity,action='study',deck_id=deck['id'])),lambda _:self.status.setText('Study request sent to '+device['label']))
     def show_pairing(self):
-        # Personal installer provisions this link; credentials stay off GitHub.
-        path=Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / 'AnkiCompanion' / 'server' / 'pairing-link.txt'
-        if not path.is_file():
+        # Works on a standard GitHub-release installation. Provision the relay
+        # inside the installed app rather than requiring a separate script.
+        if getattr(self,'_pairing_active',False):return
+        self._pairing_active=True
+        self.status.setText('Preparing your private phone connection…')
+        def paired(link):
+            self._pairing_active=False
+            QApplication.clipboard().setText(link)
             QMessageBox.information(self,'Pair phone',
-                'Your private pairing link is not ready. Open the installed Pair Phone shortcut or check that the PC is online.')
-            return
-        link=path.read_text(encoding='utf-8').strip()
-        if not link.startswith('https://'):
-            QMessageBox.warning(self,'Pair phone','The pairing link is invalid.')
-            return
-        QApplication.clipboard().setText(link)
-        QMessageBox.information(self,'Pair phone',
-            'Pairing link copied to the clipboard. Paste it once into the phone companion Connection dialog. Keep it private; it contains your pairing credential. The PC must stay online.')
+                'Pairing link copied. Open AnkiCompanion on your phone, tap Connection, and paste this link. Your PC must stay on. The free tunnel address may change after a reboot.')
+        job=self.launch(first_run.pair_phone,paired)
+        job.failed.connect(lambda _:setattr(self,'_pairing_active',False))
 
     def connect_dialog(self):
         dialog=QDialog(self);dialog.setWindowTitle('Connect companion server');form=QFormLayout(dialog)
