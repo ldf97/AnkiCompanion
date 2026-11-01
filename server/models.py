@@ -12,6 +12,7 @@ class Event(Strict):
     revlog_id: int = Field(gt=0)
     card_id: int = Field(gt=0)
     duration_ms: int = Field(ge=0, le=600_000)
+    rating: int | None = Field(default=None, ge=1, le=4)
     @property
     def key(self): return f'{self.collection_id}:{self.revlog_id}:{self.card_id}'
 
@@ -31,6 +32,8 @@ class Deck(Strict):
 
 class Snapshot(Strict):
     device_id: str = Field(min_length=1, max_length=100)
+    collection_id: str = Field(default='primary', min_length=1, max_length=100, pattern=r'^[A-Za-z0-9_-]+$')
+    applied_revision: int = Field(default=0, ge=0)
     label: str = Field(min_length=1, max_length=100)
     decks: list[Deck] = Field(max_length=10000)
     sync_status: str = Field(default='unknown',max_length=300)

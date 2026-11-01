@@ -38,6 +38,10 @@ def apply(root):
             updateCurrentCard()
             return
         }''')
+    # Observe the committed rating itself, including the final card in a deck;
+    # an updateCurrentCard()/beforeReview callback alone can miss that answer.
+    edit(vm,'        undoableOp(handler = this) { sched.answerCard(answer) }',
+         '        undoableOp(handler = this) { sched.answerCard(answer) }\n        com.ichi2.anki.CompanionIntegration.changed()\n        com.ichi2.anki.CompanionIntegration.requestSync()')
     edit(vm,'        actionFeedbackFlow.emit(tryUndo())','        actionFeedbackFlow.emit(tryUndo())\n        com.ichi2.anki.CompanionIntegration.changed()\n        com.ichi2.anki.CompanionIntegration.requestSync()')
     edit(vm,'        actionFeedbackFlow.emit(tryRedo())','        actionFeedbackFlow.emit(tryRedo())\n        com.ichi2.anki.CompanionIntegration.changed()\n        com.ichi2.anki.CompanionIntegration.requestSync()')
     provider=base+'provider/CardContentProvider.kt'

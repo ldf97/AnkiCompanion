@@ -1,5 +1,6 @@
 """Anki hooks run on the GUI thread; only network/outbox I/O runs in the worker."""
-import json, time, uuid, threading, sqlite3
+import json, time, uuid, threading, sqlite3, os
+from urllib.parse import quote
 from pathlib import Path
 from aqt import mw, gui_hooks
 from aqt.qt import QTimer
@@ -12,9 +13,23 @@ NAME=__name__; controller=None
 class Bridge:
     def __init__(self):
         self.config=mw.addonManager.getConfig(NAME) or {}
+        # The Windows companion bootstraps the local server. Never require
+        # the owner to manually transcribe its private token into Anki's addon.
+        if not self.config.get('token'):
+            local=Path(os.environ.get('LOCALAPPDATA') or
+                (Path.home()/'AppData'/'Local'))/'AnkiCompanion'/'server'/'token.txt'
+            try:
+                token=local.read_text(encoding='utf-8').strip()
+                if len(token)>=16:
+                    self.config['token']=token
+                    self.config['server_url']='http://127.0.0.1:8765'
+                    self.config['allow_lan_http']=False
+            except OSError:
+                pass
         if not self.config.get('device_id'):
             self.config['device_id']='desktop-'+uuid.uuid4().hex
             mw.addonManager.writeConfig(NAME,self.config)
+        self.applied_revision=int(self.config.get('applied_revision',0))
         self.file=Path(mw.pm.profileFolder())/'anki-companion-outbox.sqlite3'
         self.lock=threading.RLock();self.stopped=False;self.busy=False;self.syncing=False
         self.collection_synced_ms=0;self.last_sync=0;self.last_scan=0;self.review_dirty=False;self.settings={};self.backfill_active=True;self.backfill_pending=False;self.high_water=int((time.time()-370*86400)*1000)
@@ -60,7 +75,7 @@ class Bridge:
         except Exception as exc:print('Anki Companion scan:',exc);return
         self.busy=True
         def worker():
-            error=None;commands=[];settings={}
+            error=None;commands=[];settings={};native={}
             try:
                 api=self.client()
                 with self.lock,self.db() as db:
@@ -72,13 +87,16 @@ class Bridge:
                 if undo:
                     api.request('/v1/events/retract','POST',{'ids':undo})
                     with self.lock,self.db() as db:db.executemany('UPDATE undo SET sent=1 WHERE id=?',[(i,) for i in undo])
-                api.request('/v1/snapshots','POST',dict(device_id=self.config['device_id'],label=self.config.get('device_label','Anki Desktop'),decks=decks,sync_status='native Anki sync',collection_synced_ms=self.collection_synced_ms))
-                settings=api.request('/v1/state')['settings']
+                api.request('/v1/snapshots','POST',dict(device_id=self.config['device_id'],label=self.config.get('device_label','Anki Desktop'),decks=decks,collection_id=self.config.get('collection_id','primary'),
+                    applied_revision=self.applied_revision,sync_status='native Anki sync',
+                    collection_synced_ms=self.collection_synced_ms))
+                state=api.request('/v1/state?device_id='+quote(self.config['device_id'],safe=''))
+                settings=state['settings'];native=state.get('native_sync',{})
                 commands=api.request('/v1/commands/'+self.config['device_id'])['commands']
             except Exception as exc:error=str(exc)
-            if not self.stopped:mw.taskman.run_on_main(lambda:self.received(commands,settings,error))
+            if not self.stopped:mw.taskman.run_on_main(lambda:self.received(commands,settings,native,error))
         threading.Thread(target=worker,daemon=True).start()
-    def received(self,commands,settings,error):
+    def received(self,commands,settings,native,error):
         self.busy=False
         if self.stopped or not mw.col:return
         if settings:self.settings=settings
@@ -97,8 +115,16 @@ class Bridge:
                 with self.lock,self.db() as db:db.execute('INSERT OR IGNORE INTO commands VALUES (?)',(command['id'],))
                 threading.Thread(target=self.ack,args=(command['id'],),daemon=True).start()
             self.sync_then(applied)
-        if self.config.get('auto_sync',True) and mw.state in ('deckBrowser','overview','review') and time.time()-self.last_sync>(2 if self.review_dirty else 10):
+        if native.get('pending') and self.config.get('auto_sync',True):
+            version=int(native.get('revision',0))
+            self.sync_then(lambda:self.mark_applied(version))
+        elif self.config.get('auto_sync',True) and mw.state in ('deckBrowser','overview','review') and time.time()-self.last_sync>(2 if self.review_dirty else 10):
             self.sync_then(lambda:None)
+    def mark_applied(self,version):
+        if version > self.applied_revision:
+            self.applied_revision=version
+            self.config['applied_revision']=version
+            mw.addonManager.writeConfig(NAME,self.config)
     def ack(self,identity):
         try:self.client().request('/v1/commands/'+self.config['device_id']+'/'+identity+'/ack','POST',{})
         except Exception:pass

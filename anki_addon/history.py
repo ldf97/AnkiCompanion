@@ -3,11 +3,11 @@ import json
 
 
 def reconcile(collection_db, outbox_db, collection_id, cursor, recent_floor):
-    rows = collection_db.all('SELECT id,cid,time FROM revlog WHERE id>=? AND ease>0 ORDER BY id LIMIT 1000', cursor)
-    recent = collection_db.all('SELECT id,cid,time FROM revlog WHERE id>=? AND ease>0 ORDER BY id', recent_floor)
-    for rid, cid, duration in rows + recent:
+    rows = collection_db.all('SELECT id,cid,time,ease FROM revlog WHERE id>=? AND ease>0 ORDER BY id LIMIT 1000', cursor)
+    recent = collection_db.all('SELECT id,cid,time,ease FROM revlog WHERE id>=? AND ease>0 ORDER BY id', recent_floor)
+    for rid, cid, duration, rating in rows + recent:
         payload = dict(collection_id=collection_id, revlog_id=rid, card_id=cid,
-                       duration_ms=min(600000, max(0, duration)))
+                       duration_ms=min(600000, max(0, duration)), rating=rating)
         outbox_db.execute('INSERT OR IGNORE INTO outbox VALUES (?,?,0)',
                          (f'{collection_id}:{rid}:{cid}', json.dumps(payload)))
     # Reconcile all previously observed rows, including older undo/deletions.

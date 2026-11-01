@@ -8,6 +8,8 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import urlopen
 from zipfile import ZipFile, BadZipFile
 import hashlib
+import json
+import shutil
 import os
 import re
 import subprocess
@@ -147,13 +149,73 @@ def recover_eren(client):
     return "Eren artwork activated"
 
 
+def addon_archive():
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent.parent / "Anki_Companion_Bridge.ankiaddon"
+    return Path(__file__).resolve().parents[1] / "packages" / "Anki_Companion_Bridge.ankiaddon"
+
+
+def ensure_anki_bridge():
+    """Provision/update the Anki add-on in the user's default Windows profile.
+
+    Never touch the collection, review history, or unrelated add-ons.
+    Existing per-add-on meta.json, including the owner's choices, survives.
+    Anki loads a newly installed bridge the next time Anki starts.
+    """
+    roaming = os.environ.get("APPDATA")
+    if not roaming:
+        return "Anki profile location unavailable"
+    base = Path(roaming) / "Anki2"
+    if not base.is_dir():
+        return "Anki profile not found; bridge will install after Anki is installed"
+    archive = addon_archive()
+    if not archive.is_file():
+        return "Anki add-on package missing from companion installation"
+    addons = base / "addons21"
+    addons.mkdir(exist_ok=True)
+    target = addons / "anki_companion_bridge"
+    for folder in sorted(addons.iterdir()):
+        if not folder.is_dir() or folder == target:
+            continue
+        manifest = folder / "manifest.json"
+        try:
+            if manifest.is_file() and json.loads(manifest.read_text(encoding="utf-8")).get("package") == "anki_companion_bridge":
+                target = folder
+                break
+        except (OSError, ValueError):
+            continue
+    allowed = {"__init__.py", "history.py", "rules.py", "transport.py",
+               "manifest.json", "config.json", "config.md"}
+    with ZipFile(archive) as z:
+        entries = z.namelist()
+        if set(entries) != allowed or any(z.getinfo(name).file_size > 250_000 for name in entries):
+            raise RuntimeError("Anki add-on package failed validation")
+        manifest = json.loads(z.read("manifest.json"))
+        if manifest.get("package") != "anki_companion_bridge":
+            raise RuntimeError("Anki add-on manifest does not match")
+        content = {name: z.read(name) for name in entries}
+    if all((target/name).is_file() and (target/name).read_bytes() == data
+           for name, data in content.items()):
+        return "Anki desktop bridge installed"
+    # The existing data/config metadata is preserved. Replace one verified
+    # addon package; never modify or reconfigure another user's Anki addons.
+    target.mkdir(exist_ok=True)
+    for name, data in content.items():
+        destination = target / name
+        staged = target / (name + ".ankicompanion-new")
+        staged.write_bytes(data)
+        staged.replace(destination)
+    return "Anki desktop bridge installed (takes effect when Anki next starts)"
+
+
 def bootstrap():
     token = ensure_server()
     client = Client(LOCAL_URL, token)
     # Keep the existing history, review data, and private pairing token.
     skin_message = recover_eren(client)
+    bridge_message = ensure_anki_bridge()
     return {"url": LOCAL_URL, "token": token, "allow_lan_http": False,
-            "skin_message": skin_message}
+            "skin_message": skin_message, "bridge_message": bridge_message}
 
 
 def _tunnel_executable():

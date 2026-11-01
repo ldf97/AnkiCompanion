@@ -69,3 +69,50 @@ def test_private_pairing_never_returns_http_or_unauthorized_url(tmp_path,monkeyp
     assert setup._existing_pairing("new-token") is None
     (tmp_path/"pairing-link.txt").write_text("https://not-cloudflare.example?token=secret")
     assert setup._existing_pairing("new-token") is None
+
+
+def test_automatically_installs_and_updates_addon_without_losing_metadata(tmp_path, monkeypatch):
+    from desktop import bootstrap as setup
+    from zipfile import ZipFile
+    import json
+    appdata = tmp_path / "Roaming"
+    base = appdata / "Anki2" / "addons21"
+    base.mkdir(parents=True)
+    monkeypatch.setenv("APPDATA", str(appdata))
+    archive = tmp_path / "Anki_Companion_Bridge.ankiaddon"
+    payload = {"__init__.py": b"# version 1", "history.py": b"pass",
+               "rules.py": b"pass", "transport.py": b"pass",
+               "manifest.json": b'{"package":"anki_companion_bridge"}',
+               "config.json": b'{"auto_sync":true}', "config.md": b"Safe addon"}
+    def package():
+        with ZipFile(archive,"w") as z:
+            for name, data in payload.items():
+                z.writestr(name, data)
+    package()
+    monkeypatch.setattr(setup,"addon_archive",lambda:archive)
+    assert "installed" in setup.ensure_anki_bridge()
+    folder=base/"anki_companion_bridge"
+    assert (folder/"__init__.py").read_bytes()==b"# version 1"
+    (folder/"meta.json").write_text('{"config":{"user_choice":"keep"}}')
+    payload["__init__.py"]=b"# version 2"
+    package()
+    assert "installed" in setup.ensure_anki_bridge()
+    assert (folder/"__init__.py").read_bytes()==b"# version 2"
+    assert json.loads((folder/"meta.json").read_text())["config"]["user_choice"]=="keep"
+    assert setup.ensure_anki_bridge()=="Anki desktop bridge installed"
+
+
+def test_addon_package_rejects_extra_paths(tmp_path,monkeypatch):
+    from desktop import bootstrap as setup
+    from zipfile import ZipFile
+    appdata = tmp_path/"Roaming"
+    (appdata/"Anki2").mkdir(parents=True)
+    monkeypatch.setenv("APPDATA",str(appdata))
+    archive=tmp_path/"malicious.ankiaddon"
+    with ZipFile(archive,"w") as z:
+        z.writestr("../bad",b"bad")
+    monkeypatch.setattr(setup,"addon_archive",lambda:archive)
+    import pytest
+    with pytest.raises(RuntimeError,match="validation"):
+        setup.ensure_anki_bridge()
+    assert not (tmp_path/"bad").exists()
