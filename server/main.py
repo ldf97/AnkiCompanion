@@ -64,11 +64,12 @@ def create_app(data_dir=None, token=None, clock=None):
         return FileResponse(path,filename=name,media_type='application/octet-stream')
 
     @api.get('/v1/state', dependencies=[Depends(auth)])
-    def state():
+    def state(device_id: str = ''):
         value = store.state(packs, now())
         skin, _ = packs.get(value['lineup']['skin_id'], value['lineup']['skin_version'])
         value['scene'] = scene(skin, value['lineup'], now(), value['settings'], value['completed'], value['streak'])
         value['next_decks'] = {d['device_id']: next_deck(d['decks'], value['settings']['parent_deck_id'], value['settings']['clearance']) for d in value['devices']}
+        value['native_sync'] = store.native_sync_status(device_id)
         return value
 
     @api.put('/v1/settings', dependencies=[Depends(auth)])
