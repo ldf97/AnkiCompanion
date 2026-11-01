@@ -37,8 +37,14 @@ class CompanionWidget:AppWidgetProvider() {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
 
         fun widgetIntent(context:Context,state:org.json.JSONObject?,targetPackage:String?=null):Intent {
-            val deckId=state?.optJSONObject("settings")?.optString("parent_deck_id")
+            val parentId=state?.optJSONObject("settings")?.optString("parent_deck_id")
                 ?.toLongOrNull()?.takeIf{it>0}
+            // Honor "Study next subdeck": Eicosanoids may be a child of the
+            // selected parent. Prefer the latest server-selected eligible
+            // deck for this phone, without waiting for a fresh network sync.
+            val phoneId=Storage(context).deviceId
+            val next=state?.optJSONObject("next_decks")?.optJSONObject(phoneId)
+            val deckId=next?.optString("id")?.toLongOrNull()?.takeIf{it>0} ?: parentId
             val target=targetPackage ?: try{AnkiBridge.packageName(context)}catch(_:Exception){null}
             return if(deckId!=null && target!=null)reviewerIntent(target,deckId)
                 else Intent(context,MainActivity::class.java)
@@ -76,7 +82,9 @@ class CompanionWidget:AppWidgetProvider() {
                 val update=store.load("update.json")?.optBoolean("available")==true
                 // Never hide the study affordance behind an update notice.
                 val configured=state.optJSONObject("settings")?.optString("parent_deck_id")?.isNotBlank()==true
-                val instruction=if(configured)" · Tap to study" else " · Select a parent deck in app"
+                val next=state.optJSONObject("next_decks")?.optJSONObject(store.deviceId)
+                val nextName=next?.optString("name")?.substringAfterLast("::")?.take(34)?.takeIf{it.isNotBlank()}
+                val instruction=if(configured)" · Tap "+(nextName ?: "to study") else " · Select a parent deck in app"
                 views.setTextViewText(R.id.widget_status,label+instruction+if(update)" · Update available" else if(stale)" · Cached" else "")
                 frame.image.recycle();frame.badge.recycle()
             }
