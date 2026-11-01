@@ -12,6 +12,7 @@ class Event(Strict):
     revlog_id: int = Field(gt=0)
     card_id: int = Field(gt=0)
     duration_ms: int = Field(ge=0, le=600_000)
+    rating: int | None = Field(default=None, ge=1, le=4)
     @property
     def key(self): return f'{self.collection_id}:{self.revlog_id}:{self.card_id}'
 
