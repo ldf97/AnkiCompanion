@@ -69,7 +69,7 @@ class CompanionAcceptanceTest : InstrumentedTest() {
                 val view=activity.findViewById<View>(id)
                 last=if(view==null)"not found" else
                     "shown=${view.isShown}, enabled=${view.isEnabled}, visibility=${view.visibility}"
-                if(view?.isShown==true && view.isEnabled)pressed.set(view.performClick())
+                if(view!=null && view.isShown && view.isEnabled)pressed.set(view.performClick())
             }
             if(pressed.get())return
             Thread.sleep(100)
