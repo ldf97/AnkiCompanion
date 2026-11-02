@@ -2,6 +2,17 @@
 from datetime import datetime, timedelta, timezone
 import ipaddress, os, secrets, socket, ssl, subprocess, sys, time
 import httpx, pytest
+from server.main import create_app
+
+# Live TLS/network transport with a fixed server clock. Without this, a CI
+# run crossing midnight New York time counts the test's 60-second-old
+# reviews in *yesterday's* study day and intermittently fails.
+FIXED_NOW_MS = 1790870400000
+
+
+def fixed_clock_app():
+    return create_app(clock=lambda: FIXED_NOW_MS)
+
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -20,7 +31,7 @@ def test_tls_authentication_and_cross_client_progress(tmp_path):
     with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     token=secrets.token_urlsafe(32)
     env=dict(os.environ,ANKI_COMPANION_DATA=str(tmp_path/'server'),ANKI_COMPANION_TOKEN=token)
-    command=[sys.executable,'-m','uvicorn','server.main:create_app','--factory','--host','127.0.0.1','--port',str(port),'--ssl-keyfile',str(key_path),'--ssl-certfile',str(cert_path)]
+    command=[sys.executable,'-m','uvicorn','tests.test_https_connection:fixed_clock_app','--factory','--host','127.0.0.1','--port',str(port),'--ssl-keyfile',str(key_path),'--ssl-certfile',str(cert_path)]
     with (tmp_path/'https.log').open('w') as log:
         process=subprocess.Popen(command,env=env,stdout=log,stderr=subprocess.STDOUT)
         context=ssl.create_default_context(cafile=str(cert_path));url=f'https://127.0.0.1:{port}'
@@ -36,7 +47,7 @@ def test_tls_authentication_and_cross_client_progress(tmp_path):
                 settings=desktop.get('/v1/settings').json();settings.update(lesson_answers=50,lesson_ms=0)
                 assert desktop.put('/v1/settings',json=settings).status_code==200
                 def send(client,start,count):
-                    stamp=int(time.time()*1000)-60000
+                    stamp=FIXED_NOW_MS-60000
                     return client.post('/v1/events',json={'events':[dict(collection_id='primary',revlog_id=stamp+i,card_id=i+1,duration_ms=1000) for i in range(start,start+count)]})
                 assert send(desktop,0,20).status_code==200
                 assert phone.get('/v1/state').json()['progress']['answers']==20
