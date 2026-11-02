@@ -18,7 +18,7 @@ ROOT=Path(__file__).resolve().parents[1]
 def _package(path):
     with ZipFile(path,'w') as archive:
         for name in ('__init__.py','bridge.py','history.py','rules.py','transport.py',
-                     'config.json','config.md','manifest.json'):
+                     'review_epoch.py','config.json','config.md','manifest.json'):
             data=(ROOT/'anki_addon'/name).read_bytes()
             archive.writestr(name,data)
 
