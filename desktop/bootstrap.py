@@ -238,6 +238,26 @@ def bootstrap():
             'skin_message':skin_message,'bridge_message':bridge_message}
 
 
+
+def export_hosted_state(destination):
+    """GUI-only, one-time migration export; normal updates never need it."""
+    from server.backup import snapshot_server, verify_snapshot, SnapshotError
+    path=Path(destination).expanduser()
+    if path.suffix.lower()!=".zip" or not path.parent.is_dir():
+        raise ValueError("Choose an existing folder and a .zip migration filename")
+    if path.exists():
+        raise FileExistsError("Migration archive already exists; choose a different filename")
+    archive=snapshot_server(data_dir(),path.parent)
+    if archive is None:
+        raise RuntimeError("Original Windows server history was not found")
+    manifest=verify_snapshot(archive)
+    if "token.txt" not in manifest["files"]:
+        archive.unlink(missing_ok=True)
+        raise RuntimeError("Original server token is missing; cannot export a usable migration")
+    archive.replace(path)
+    path.chmod(0o600)
+    return str(path)
+
 def _tunnel_executable():
     base = Path(sys.executable).resolve().parent
     candidates = [base.parent / "tools" / "cloudflared.exe",

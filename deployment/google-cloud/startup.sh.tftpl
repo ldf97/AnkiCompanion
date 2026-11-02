@@ -57,10 +57,6 @@ bind_volume() {
 bind_volume ankicompanion_data /srv/ankicompanion/data
 bind_volume ankicompanion_backups /srv/ankicompanion/backups
 
-if [ "${require_migration}" = "true" ] && [ ! -s /srv/ankicompanion/data/companion.sqlite3 ]; then
-  echo "MIGRATION_REQUIRED: original Windows server SQLite, token.txt and packs must be copied once before starting."
-  exit 0
-fi
 if [ ! -d /opt/ankicompanion/.git ]; then
   git clone --no-checkout https://github.com/ldf97/AnkiCompanion.git /opt/ankicompanion
 fi
@@ -68,6 +64,22 @@ cd /opt/ankicompanion
 git fetch --depth 1 origin "${source_ref}"
 git checkout --detach --force FETCH_HEAD
 test "$(git rev-parse HEAD)" = "${source_ref}"
+
+# Google Cloud Console's SSH-in-browser supports Upload File; the owner can
+# place a verified, one-time Windows export ZIP in their VM home via GUI.
+shopt -s nullglob
+if [ ! -s /srv/ankicompanion/data/companion.sqlite3 ]; then
+  for archive in /home/*/AnkiCompanion-Server-Migration.zip; do
+    [ -f "$archive" ] || continue
+    python3 -m scripts.restore_hosted "$archive" /srv/ankicompanion/data
+    rm -f -- "$archive"
+    break
+  done
+fi
+if [ "${require_migration}" = "true" ] && [ ! -s /srv/ankicompanion/data/companion.sqlite3 ]; then
+  echo "MIGRATION_REQUIRED: in the Google Cloud SSH browser, Upload File using the verified ZIP exported from AnkiCompanion, then restart this VM."
+  exit 0
+fi
 cat >deployment/.env <<'CONF'
 COMPANION_DOMAIN=${domain}
 ACME_EMAIL=${email}

@@ -119,6 +119,7 @@ class Window(QMainWindow):
         head=QHBoxLayout();title=QLabel('ANKI  /  COMPANION');title.setObjectName('title');head.addWidget(title);head.addStretch()
         connect=QPushButton('Connection');connect.clicked.connect(self.connect_dialog);head.addWidget(connect)
         pairing=QPushButton('Pair phone');pairing.clicked.connect(self.show_pairing);head.addWidget(pairing)
+        move_cloud=QPushButton('Export to Google Cloud');move_cloud.clicked.connect(self.export_google_cloud);head.addWidget(move_cloud)
         box.addLayout(head)
         self.panel=Panel();box.addWidget(self.panel,1)
         self.status=QLabel('Connect your server to begin.');self.status.setWordWrap(True);box.addWidget(self.status)
@@ -268,6 +269,20 @@ class Window(QMainWindow):
                 'Pairing link copied. Open AnkiCompanion on your phone, tap Connection, and paste this link. Your PC must stay on. The free tunnel address may change after a reboot.')
         job=self.launch(first_run.pair_phone,paired)
         job.failed.connect(lambda _:setattr(self,'_pairing_active',False))
+
+    def export_google_cloud(self):
+        # One-time source-server transfer. No PowerShell or installer reset.
+        filename,_=QFileDialog.getSaveFileName(self,'Export existing server for Google Cloud',
+            str(Path.home()/'Downloads'/'AnkiCompanion-Server-Migration.zip'),
+            'ZIP archive (*.zip)')
+        if not filename:return
+        def finished(path):
+            QMessageBox.information(self,'Google Cloud migration archive created',
+                'Verified server archive saved. It contains your private token, study history and skins. '
+                'In Google Cloud Console open the VM SSH browser, choose Upload File and select this ZIP; '
+                'then restart the VM from the Console. The original PC files remain untouched. '
+                'Delete your local ZIP after the migration is verified.')
+        self.launch(lambda:first_run.export_hosted_state(filename),finished)
 
     def connect_dialog(self):
         dialog=QDialog(self);dialog.setWindowTitle('Connect companion server');form=QFormLayout(dialog)
