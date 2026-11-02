@@ -220,7 +220,5 @@ def synced(*args):
     if controller:
         try:controller.collection_synced()
         except Exception as exc:print('Anki Companion sync callback:',exc)
-gui_hooks.profile_did_open.append(opened)
-gui_hooks.profile_will_close.append(closed)
-gui_hooks.reviewer_did_answer_card.append(answered)
-gui_hooks.sync_did_finish.append(synced)
+# All GUI hooks are registered exactly once by the guarded __init__.py.
+# Registering them again here would duplicate startup and review callbacks.
