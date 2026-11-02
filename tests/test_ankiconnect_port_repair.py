@@ -135,3 +135,10 @@ def test_update_is_one_click_and_relaunches_only_on_update_switch():
     assert 'publish: true' in release
     assert 'needs: [verification, assemble, signed-upgrade]' in candidate
     assert 'environment: production-release' in candidate
+
+
+def test_optional_emulator_evidence_pull_does_not_override_passing_instrumentation():
+    script=(Path(__file__).resolve().parents[1]/'scripts/check_android_emulator.sh').read_text()
+    assert 'assert "OK (" in s and "FAILURES" not in s' in script
+    assert 'if ! adb pull /sdcard/' in script
+    assert 'evidence-pull-warning.txt' in script
