@@ -41,7 +41,7 @@ def snapshot_server(data_dir, backups_dir):
         copied = stage / "companion.sqlite3"
         # sqlite3.backup() includes committed WAL transactions; copying a live
         # .sqlite3 file alone would silently lose recent answers.
-        with closing(sqlite3.connect(f"file:{source.as_posix()}?mode=ro", uri=True, timeout=30)) as active:
+        with closing(sqlite3.connect(source.resolve().as_uri()+"?mode=ro", uri=True, timeout=30)) as active:
             with closing(sqlite3.connect(copied)) as saved:
                 active.backup(saved)
                 result = saved.execute("PRAGMA integrity_check").fetchone()
