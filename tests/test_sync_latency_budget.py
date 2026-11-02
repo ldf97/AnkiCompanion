@@ -21,3 +21,8 @@ def test_25_phone_reviews_dispatch_to_laptop_within_local_five_second_budget(tmp
     assert pending['pending'] and pending['revision']==1
     assert time.monotonic()-start < 5.0
     # This asserts server dispatch only, not AnkiWeb or network sync latency.
+
+def test_active_phone_background_poll_targets_one_second():
+    from pathlib import Path
+    src=(Path(__file__).resolve().parents[1]/"android/app/src/main/java/org/ankicompanion/app/LiveSyncService.kt").read_text()
+    assert "postDelayed(this,1000)" in src
