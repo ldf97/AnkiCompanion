@@ -207,7 +207,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: ${{ matrix.api-level }}
+          api-level: 35
           arch: x86_64
           profile: pixel_6
           disable-animations: false
