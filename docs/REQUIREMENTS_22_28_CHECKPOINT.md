@@ -15,7 +15,7 @@ Do not merge or publish until full CI, signing, real-device upgrade and Anki acc
 ## Sequential work ledger
 - [x] **22**: Shared SHA-256 revision from confirmed state, displayed by desktop/Android; local `pytest tests/test_server.py -k shared_revision` passed (2 tests).
 - [x] **23**: Server now fails closed if an existing database is missing its token or required schema/settings; local restart and data-retention tests verify the original bytes, history, shared revision and owner artwork survive updates.
-- [ ] **24**: Not started.
+- [x] **24**: The Windows in-app updater now creates and verifies a transactional SQLite/token/private-skin backup *before* launching an in-place installer, and rejects unsafe upgrades without asking for a restore; same-signer Android upgrade retention was already tested in emulator.
 - [ ] **25**: Not started.
 - [ ] **26**: Not started.
 - [ ] **27**: Not started.

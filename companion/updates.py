@@ -70,6 +70,27 @@ def validate_windows_signature(signature, expected):
     if signature.get('status')!='Valid' or signature.get('thumbprint','').upper()!=expected.upper():
         raise ValueError('Windows installer signature does not match the trusted publisher')
 
+def preserve_windows_state_before_update(localappdata=None):
+    """Automatically snapshot the existing server before replacing binaries.
+
+    This runs inside the GUI Update action; normal upgrades never import or
+    restore files. The extra snapshot is for exceptional disaster recovery,
+    stored outside the installer code directory and checksum-verified.
+    """
+    root = Path(localappdata or os.environ.get('LOCALAPPDATA') or
+                (Path.home()/'AppData'/'Local'))/'AnkiCompanion'
+    data = root/'server'
+    if not (data/'companion.sqlite3').is_file():
+        return None  # brand-new client or remote-only desktop
+    if not (data/'token.txt').is_file():
+        raise ValueError('Existing study history has no pairing token; refusing update before data is safe')
+    from server.backup import snapshot_server, verify_snapshot
+    archive = snapshot_server(data, root/'backups-before-updates')
+    if archive is None or 'token.txt' not in verify_snapshot(archive)['files']:
+        raise ValueError('Automatic pre-update study backup was not verified')
+    return archive
+
+
 def install(package, release=None):
     """Run a verified GitHub release installer. A paid Authenticode cert is optional.
 
@@ -95,6 +116,10 @@ def install(package, release=None):
         result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',script],
             env=dict(os.environ,ANKICOMPANION_INSTALLER=str(package)),check=True,capture_output=True,text=True,timeout=30)
         validate_windows_signature(json.loads(result.stdout),expected)
+    # Make a verified, crash-consistent copy of existing reviews, pairing token,
+    # and private skin bytes before launching the installer. The normal update
+    # leaves the original files in place and never asks for a restore.
+    preserve_windows_state_before_update()
     # Windows may still ask for an installer/security confirmation. No shell is
     # required, and the normal installer preserves user data across upgrades.
     subprocess.Popen([str(package),'/CURRENTUSER','/RESTARTAPPLICATIONS'],close_fds=True)
