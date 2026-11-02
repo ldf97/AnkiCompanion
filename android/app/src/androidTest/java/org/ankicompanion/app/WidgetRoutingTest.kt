@@ -8,7 +8,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Verify widget tap targets the exact saved AnkiDroid deck without an app/sync detour. */
+/** Verify widget tap runs sync preflight instead of offering an outdated card. */
 @RunWith(AndroidJUnit4::class)
 class WidgetRoutingTest {
     private val target="com.ichi2.anki.companion.debug"
@@ -18,11 +18,10 @@ class WidgetRoutingTest {
         val settings=JSONObject().put("parent_deck_id","987654321")
         val state=JSONObject().put("settings",settings)
         val launch=CompanionWidget.widgetIntent(context,state,target)
-        assertEquals(Intent.ACTION_MAIN,launch.action)
-        assertEquals(target,launch.component?.packageName)
-        assertEquals("com.ichi2.anki.IntentHandler",launch.component?.className)
-        assertEquals(987654321L,launch.getLongExtra("EXTRA_DECK_ID",-1))
-        assertFalse("Widget must not wait for companion app native sync",launch.hasExtra("study"))
+        assertEquals(context.packageName,launch.component?.packageName)
+        assertEquals(MainActivity::class.java.name,launch.component?.className)
+        assertEquals(987654321L,launch.getLongExtra("widget_target_deck_id",-1))
+        assertTrue("Widget must catch up before opening a stale deck",launch.getBooleanExtra("study",false))
     }
 
     @Test fun widgetTapPrefersNextEligibleEicosanoidsChildDeckOverParent() {
@@ -32,8 +31,9 @@ class WidgetRoutingTest {
             .put("next_decks",JSONObject().put(phoneId,
                 JSONObject().put("id","987654321").put("name","M2::Eicosanoids")))
         val launch=CompanionWidget.widgetIntent(context,state,target)
-        assertEquals("com.ichi2.anki.IntentHandler",launch.component?.className)
-        assertEquals(987654321L,launch.getLongExtra("EXTRA_DECK_ID",-1))
+        assertEquals(MainActivity::class.java.name,launch.component?.className)
+        assertEquals(987654321L,launch.getLongExtra("widget_target_deck_id",-1))
+        assertTrue(launch.getBooleanExtra("study",false))
     }
 
     @Test fun widgetTapWithoutSelectedDeckExplainsSetupInsteadOfSilentlyDoingNothing() {

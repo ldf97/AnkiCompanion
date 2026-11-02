@@ -51,6 +51,11 @@ class CrossDeviceTest {
             host.addView(widgetView,FrameLayout.LayoutParams((320*dp).toInt(),(160*dp).toInt(),Gravity.CENTER))
             // System-delivered AppWidgetHostView updates work without putting
             // a companion Activity on-screen, even while AnkiDroid is foreground.
+            // AnkiDroid's simultaneous instrumentation owns UiAutomation.
+            // A second UiAutomation client would crash the acceptance test.
+            // A foreground-service start is permitted in this test's live
+            // instrumented study session; production separately catches OS
+            // background-start restrictions and schedules a retry.
             LiveSyncService.start(context)
         }
         signal("observer-ready")
@@ -94,5 +99,6 @@ class CrossDeviceTest {
         }
         assertTrue("AnkiDroid scheduling did not converge",matched)
         instrumentation.runOnMainSync {widgetHost.stopListening();widgetHost.deleteAppWidgetId(widgetId)}
+        signal("observer-finished")
     }
 }

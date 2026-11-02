@@ -23,6 +23,10 @@ def create_app(data_dir=None, token=None, clock=None):
         token = os.environ.get('ANKI_COMPANION_TOKEN')
         if not token:
             if not token_file.exists():
+                # Existing study history must NEVER be paired to a brand-new
+                # token silently after a partial restore or failed upgrade.
+                if (data/'companion.sqlite3').exists():
+                    raise RuntimeError('Existing server database has no pairing token; restore token.txt from the verified backup before starting')
                 token_file.write_text(secrets.token_urlsafe(32)); token_file.chmod(0o600)
             token = token_file.read_text().strip()
     if len(token) < 16: raise ValueError('Server token must contain at least 16 characters')
@@ -64,11 +68,12 @@ def create_app(data_dir=None, token=None, clock=None):
         return FileResponse(path,filename=name,media_type='application/octet-stream')
 
     @api.get('/v1/state', dependencies=[Depends(auth)])
-    def state():
+    def state(device_id: str = '', collection_id: str = 'primary'):
         value = store.state(packs, now())
         skin, _ = packs.get(value['lineup']['skin_id'], value['lineup']['skin_version'])
         value['scene'] = scene(skin, value['lineup'], now(), value['settings'], value['completed'], value['streak'])
         value['next_decks'] = {d['device_id']: next_deck(d['decks'], value['settings']['parent_deck_id'], value['settings']['clearance']) for d in value['devices']}
+        value['native_sync'] = store.sync_status(device_id, collection_id)
         return value
 
     @api.put('/v1/settings', dependencies=[Depends(auth)])
@@ -85,9 +90,14 @@ def create_app(data_dir=None, token=None, clock=None):
         except Conflict: raise
         except ValueError as exc: raise HTTPException(400,str(exc)) from exc
 
+    @api.get('/v1/events/audit', dependencies=[Depends(auth)])
+    def event_audit(after:str='',limit:int=100):
+        try: return store.audit_events(after,limit)
+        except ValueError as exc: raise HTTPException(400,str(exc)) from exc
+
     @api.post('/v1/events/retract', dependencies=[Depends(auth)])
     def retract(body: Retractions):
-        try: store.retract(body.ids)
+        try: store.retract(body.ids,body.device_id,now())
         except ValueError as exc: raise HTTPException(400,str(exc)) from exc
         return {'ok':True}
 
@@ -156,7 +166,7 @@ def create_app(data_dir=None, token=None, clock=None):
 def main():
     import argparse,uvicorn
     parser=argparse.ArgumentParser(description='Personal Anki Companion server')
-    parser.add_argument('--host',default='127.0.0.1');parser.add_argument('--port',type=int,default=8765)
+    parser.add_argument('--host',default='127.0.0.1');parser.add_argument('--port',type=int,default=int(os.environ.get('PORT','8765')))
     parser.add_argument('--data',default=str(DEFAULT_DATA));args=parser.parse_args()
     app=create_app(args.data)
     print('Pairing token is stored in',Path(args.data).resolve()/'token.txt')

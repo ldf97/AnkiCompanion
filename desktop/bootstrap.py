@@ -8,6 +8,7 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import urlopen
 from zipfile import ZipFile, BadZipFile
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -21,6 +22,34 @@ EREN_SHA256 = "7c25d1434b9971ea89193be60a665b18c0a5ed9be66fa4f92c36c94752dce412"
 CLOUDFLARED_SHA256 = "547057326266f0e1c7d50d102dbd22ff283d740c055bd61e94f10e2c606f89af"
 PAIRING_HOST = re.compile(r"^https://[a-z0-9-]+\.trycloudflare\.com$")
 LOCAL_URL = "http://127.0.0.1:8765"
+
+def has_remote_connection(config):
+    """Keep an explicitly configured remote connection on Windows restarts.
+
+    Running a local bootstrap must never replace the saved hosted endpoint,
+    token, or collection preferences. A trusted LAN connection may use HTTP;
+    public remote connections must be HTTPS.
+    """
+    if not isinstance(config, dict) or len(config.get("token") or "") < 16:
+        return False
+    try:
+        url = urlsplit((config.get("url") or "").strip())
+        return (bool(url.hostname)
+                and url.hostname not in ("localhost", "127.0.0.1", "::1")
+                and not (url.username or url.password or url.query or url.fragment)
+                and (url.scheme == "https" or
+                     (url.scheme == "http" and config.get("allow_lan_http") is True)))
+    except (ValueError, TypeError):
+        return False
+
+
+def remote_pairing_link(config):
+    """Produce a phone pairing link from the *saved* always-on HTTPS server."""
+    if not has_remote_connection(config) or urlsplit(config["url"]).scheme != "https":
+        raise ValueError("Remote phone pairing requires a configured HTTPS server")
+    base = config["url"].rstrip("/")
+    return base + "?" + urlencode({"token": config["token"], "collection_id": "primary"})
+
 
 
 def data_dir():
@@ -128,33 +157,106 @@ def find_original_eren():
 
 
 def recover_eren(client):
-    """Import/activate the exact owner's original pack, if already on their PC."""
+    """Recover the original pack once without changing later dropdown choices."""
     installed = client.request("/v1/skins")
     exists = any(s["id"] == "eren_anki" and s["version"] == "1.0.0"
                  for s in installed.get("skins", []))
-    if not exists:
-        data = find_original_eren()
-        if data is None:
-            return "Original Eren ZIP was not found among files already on this PC"
-        imported = client.request("/v1/skins/import", "POST", data,
-                                  content_type="application/zip")
-        if imported.get("id") != "eren_anki":
-            raise RuntimeError("The original Eren skin was rejected by the server")
+    if exists:
+        return "Eren artwork available; selected skin preserved"
+    data = find_original_eren()
+    if data is None:
+        return "Original Eren ZIP was not found among files already on this PC"
+    imported = client.request("/v1/skins/import", "POST", data,
+                              content_type="application/zip")
+    if imported.get("id") != "eren_anki":
+        raise RuntimeError("The original Eren skin was rejected by the server")
     settings = client.request("/v1/settings")
-    if (settings["skin_id"], settings["skin_version"]) != ("eren_anki", "1.0.0"):
+    # First import activates Eren only for untouched neutral defaults.
+    if settings.get("skin_id") in (None, "", "study_companion"):
         settings.update(skin_id="eren_anki", skin_version="1.0.0")
         client.request("/v1/settings", "PUT", settings)
-    return "Eren artwork activated"
+        return "Eren artwork activated"
+    return "Eren artwork imported; selected skin preserved"
+
+
+def addon_archive():
+    if getattr(sys,'frozen',False):
+        return Path(sys.executable).resolve().parent.parent/'Anki_Companion_Bridge.ankiaddon'
+    return Path(__file__).resolve().parents[1]/'packages'/'Anki_Companion_Bridge.ankiaddon'
+
+
+def ensure_anki_bridge():
+    """Safely install/upgrade the optional desktop add-on without scripting.
+
+    Never read, modify, copy, or replace Anki's collection files. Preserve
+    meta.json and any user's existing add-on configuration/preferences.
+    """
+    roaming=os.environ.get('APPDATA')
+    if not roaming:return 'Anki profile directory not available yet'
+    base=Path(roaming)/'Anki2'
+    if not base.is_dir():return 'Anki not installed yet; will retry next startup'
+    archive=addon_archive()
+    if not archive.is_file():return 'Anki bridge package was not bundled'
+    addons=base/'addons21';addons.mkdir(exist_ok=True)
+    target=addons/'anki_companion_bridge'
+    with ZipFile(archive) as z:
+        names=z.namelist()
+        allowed={'__init__.py','bridge.py','history.py','rules.py','transport.py',
+                 'config.json','config.md','manifest.json'}
+        if set(names)!=allowed or any(z.getinfo(n).file_size>250_000 for n in names):
+            raise ValueError('Bundled desktop bridge did not pass validation')
+        manifest=json.loads(z.read('manifest.json'))
+        if manifest.get('package')!='anki_companion_bridge':
+            raise ValueError('Unexpected add-on package identity')
+        files={n:z.read(n) for n in names}
+    # Detect an old, differently-named instance of OUR bridge. Do not install
+    # a duplicate that would register hooks twice and disrupt Anki.
+    for candidate in addons.iterdir():
+        if not candidate.is_dir() or candidate==target:continue
+        info=candidate/'manifest.json'
+        try:
+            if info.is_file() and json.loads(info.read_text(encoding='utf-8')).get('package')=='anki_companion_bridge':
+                target=candidate;break
+        except (OSError,ValueError):pass
+    if all((target/n).is_file() and (target/n).read_bytes()==b for n,b in files.items()):
+        return 'Anki desktop bridge installed'
+    target.mkdir(exist_ok=True)
+    # Individual atomic replacement means Anki never imports a half-written
+    # Python source file. Existing meta.json/config persists across updates.
+    for name, contents in files.items():
+        dest=target/name;stage=target/(name+'.new')
+        stage.write_bytes(contents);stage.replace(dest)
+    return 'Anki desktop bridge installed; active after Anki next starts'
 
 
 def bootstrap():
-    token = ensure_server()
-    client = Client(LOCAL_URL, token)
-    # Keep the existing history, review data, and private pairing token.
-    skin_message = recover_eren(client)
-    return {"url": LOCAL_URL, "token": token, "allow_lan_http": False,
-            "skin_message": skin_message}
+    token=ensure_server()
+    client=Client(LOCAL_URL,token)
+    skin_message=recover_eren(client)
+    bridge_message=ensure_anki_bridge()
+    return {'url':LOCAL_URL,'token':token,'allow_lan_http':False,
+            'skin_message':skin_message,'bridge_message':bridge_message}
 
+
+
+def export_hosted_state(destination):
+    """GUI-only, one-time migration export; normal updates never need it."""
+    from server.backup import snapshot_server, verify_snapshot, SnapshotError
+    path=Path(destination).expanduser()
+    if path.suffix.lower()!=".zip" or not path.parent.is_dir():
+        raise ValueError("Choose an existing folder and a .zip migration filename")
+    if path.exists():
+        raise FileExistsError("Migration archive already exists; choose a different filename")
+    archive=snapshot_server(data_dir(),path.parent)
+    if archive is None:
+        raise RuntimeError("Original Windows server history was not found")
+    manifest=verify_snapshot(archive)
+    if "token.txt" not in manifest["files"]:
+        archive.unlink(missing_ok=True)
+        raise RuntimeError("Original server token is missing; cannot export a usable migration")
+    archive.replace(path)
+    path.chmod(0o600)
+    return str(path)
 
 def _tunnel_executable():
     base = Path(sys.executable).resolve().parent

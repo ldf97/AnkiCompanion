@@ -114,5 +114,12 @@ class CompanionAcceptanceTest : InstrumentedTest() {
                 .put("cards",rows("SELECT id,queue,type,due,ivl,reps,lapses FROM cards ORDER BY id"))
         }
         assertTrue(control("/test/verify-phone",snapshot).getBoolean("matched"))
+        // The companion instrumentation is still querying this AnkiDroid
+        // process's CardContentProvider. If this test exits first, Android
+        // kills that dependent process (SIGKILL) and falsely reports the
+        // companion's successful 50/50 acceptance as "Process crashed".
+        awaitCondition("Companion observer did not finish"){
+            control("/test/status").optBoolean("observer_finished")
+        }
     }
 }

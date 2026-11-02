@@ -11,7 +11,7 @@ class LiveSyncService:Service() {
     private val tick=object:Runnable {override fun run(){
         if(!active)return
         Sync.executor.execute {
-            try {Sync.run(applicationContext)}finally{if(active)handler.postDelayed(this,5000)}
+            try {Sync.run(applicationContext)}finally{if(active)handler.postDelayed(this,1000)}
         }
     }}
     override fun onBind(intent:Intent?)=null
@@ -29,5 +29,18 @@ class LiveSyncService:Service() {
     }
     override fun onTimeout(startId:Int,fgsType:Int){stopSelf()}
     override fun onDestroy(){active=false;handler.removeCallbacksAndMessages(null);super.onDestroy()}
-    companion object {fun start(context:Context){context.startForegroundService(Intent(context,LiveSyncService::class.java))}}
+    companion object {
+        fun start(context:Context) {
+            try {
+                context.startForegroundService(Intent(context,LiveSyncService::class.java))
+            } catch (e:IllegalStateException) {
+                // Android 12+ may deny starts from the background. A denied
+                // service must never crash a widget, receiver or review UI.
+                Sync.schedule(context,true)
+            } catch (e:SecurityException) {
+                // Foreground-service quota, permission or OS policy denied.
+                Sync.schedule(context,true)
+            }
+        }
+    }
 }

@@ -10,6 +10,7 @@ from companion.packs import Packs
 from companion.rules import scene, daily_lineup, study_day, lesson_progress
 from app.widget_engine import WidgetEngine
 from companion import updates
+from companion.status import device_status
 from desktop import bootstrap as first_run
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -119,6 +120,7 @@ class Window(QMainWindow):
         head=QHBoxLayout();title=QLabel('ANKI  /  COMPANION');title.setObjectName('title');head.addWidget(title);head.addStretch()
         connect=QPushButton('Connection');connect.clicked.connect(self.connect_dialog);head.addWidget(connect)
         pairing=QPushButton('Pair phone');pairing.clicked.connect(self.show_pairing);head.addWidget(pairing)
+        move_cloud=QPushButton('Export to Google Cloud');move_cloud.clicked.connect(self.export_google_cloud);head.addWidget(move_cloud)
         box.addLayout(head)
         self.panel=Panel();box.addWidget(self.panel,1)
         self.status=QLabel('Connect your server to begin.');self.status.setWordWrap(True);box.addWidget(self.status)
@@ -135,6 +137,11 @@ class Window(QMainWindow):
         for b in (goals,skins,compact):footer.addWidget(b)
         box.addLayout(footer);note=QLabel('A lesson maintains your streak. Anki decides which cards are available.');note.setWordWrap(True);note.setObjectName('muted');box.addWidget(note)
         self.update_button=QPushButton('Updates · '+updates.version()['version']);self.update_button.clicked.connect(lambda:self.check_updates(True));box.addWidget(self.update_button)
+        self.repair_button=QPushButton('Repair setup · Anki bridge / server');self.repair_button.clicked.connect(self.repair_setup);box.addWidget(self.repair_button)
+        # Anki can be installed AFTER the companion. Retry safe add-on setup
+        # periodically without asking the owner to run commands or copy files.
+        self.bridge_timer=QTimer(self);self.bridge_timer.timeout.connect(self.ensure_bridge_periodic)
+        if autostart and sys.platform=='win32':self.bridge_timer.start(10*60*1000)
         self.update_timer=QTimer(self);self.update_timer.timeout.connect(lambda:self.check_updates(False))
         if autostart:self.update_timer.start(15*60*1000);QTimer.singleShot(3000,lambda:self.check_updates(False))
         self.timer=QTimer(self);self.timer.timeout.connect(self.refresh)
@@ -145,8 +152,31 @@ class Window(QMainWindow):
             else:
                 QTimer.singleShot(0,self.refresh)
 
+    def repair_setup(self):
+        """One-click repair; never resets data or changes saved hosted pairing."""
+        if sys.platform!='win32':
+            self.status.setText('Setup repair is managed inside the Windows installer or Android app')
+        elif first_run.has_remote_connection(self.config):
+            self.ensure_bridge_periodic(show_result=True)
+        else:
+            self.bootstrap_local()
+
+    def ensure_bridge_periodic(self,show_result=False):
+        if sys.platform!='win32' or getattr(self,'_bridge_repair_running',False):return
+        self._bridge_repair_running=True
+        def completed(message):
+            if show_result:self.status.setText(message+' · hosted connection preserved')
+        job=self.launch(first_run.ensure_anki_bridge,completed)
+        job.finished.connect(lambda:setattr(self,'_bridge_repair_running',False))
+
     def bootstrap_local(self):
-        """Self-repair in an ordinary background app worker; no user commands."""
+        """Self-repair without overwriting a saved hosted connection."""
+        if first_run.has_remote_connection(self.config):
+            self.status.setText('Using saved always-on companion server')
+            # The add-on can self-repair independently of a local API process.
+            self.launch(first_run.ensure_anki_bridge,lambda _:self.refresh())
+            self.refresh()
+            return
         if getattr(self,'_bootstrapping',False):return
         self._bootstrapping=True
         self.status.setText('Connecting to your local AnkiCompanion server…')
@@ -154,7 +184,7 @@ class Window(QMainWindow):
             self._bootstrapping=False
             self.config={k:value[k] for k in ('url','token','allow_lan_http')}
             write_json(self.config_path,self.config,private=True)
-            self.status.setText(value['skin_message'])
+            self.status.setText(value['skin_message']+' · '+value.get('bridge_message',''))
             self.refresh()
         job=self.launch(first_run.bootstrap,ready)
         job.failed.connect(lambda _:setattr(self,'_bootstrapping',False))
@@ -204,7 +234,16 @@ class Window(QMainWindow):
         if frame:
             self.panel.set_frame(frame,warning,warn);self.dock.panel.set_frame(frame,warning,warn);self.last_key=key
         age=max(0,int((time.time()*1000-value['server_time_ms'])/1000))
-        self.status.setText(('Connected · last server update '+str(age)+'s ago') if online else ('Offline · last server update '+str(age)+'s ago'+(' · new day is not yet synced' if old_day else '')))
+        status=('Connected · last server update '+str(age)+'s ago') if online else ('Offline · last server update '+str(age)+'s ago'+(' · new day is not yet synced' if old_day else ''))
+        # Report durable per-device native scheduling receipts; progress totals
+        # alone do NOT certify that due dates have converged in Anki.
+        for device in value['devices'][:5]:
+            status+=' · '+device_status(device)
+        if not online:
+            status+=' · connection retry pending (using cached progress)'
+        if value.get('shared_revision'):
+            status+=' · confirmed state '+value['shared_revision'][:8]
+        self.status.setText(status)
         p=value['progress'];g=value['policy'];ratio=min(p['answers']/g['lesson_answers'],p['duration_ms']/g['lesson_ms'] if g['lesson_ms'] else 1)
         self.progress.setValue(min(100,int(ratio*100)))
         remaining=max(0,g['lesson_answers']-p['answers']);percent=min(100,p['answers']*100//g['lesson_answers'])
@@ -238,6 +277,15 @@ class Window(QMainWindow):
         if int(time.time()*1000)-device['updated_ms']>120000:self.status.setText('Study device is offline. Open Anki on that device and refresh.');return
         self.launch(lambda:self.client().request('/v1/commands','POST',dict(device_id=identity,action='study',deck_id=deck['id'])),lambda _:self.status.setText('Study request sent to '+device['label']))
     def show_pairing(self):
+        if first_run.has_remote_connection(self.config):
+            try:
+                link=first_run.remote_pairing_link(self.config)
+            except ValueError as exc:
+                QMessageBox.warning(self,'Pair phone',str(exc));return
+            QApplication.clipboard().setText(link)
+            QMessageBox.information(self,'Pair phone',
+                'Hosted HTTPS pairing link copied. Paste it into Connection on the phone. Your Windows PC can be turned off.')
+            return
         # Works on a standard GitHub-release installation. Provision the relay
         # inside the installed app rather than requiring a separate script.
         if getattr(self,'_pairing_active',False):return
@@ -250,6 +298,20 @@ class Window(QMainWindow):
                 'Pairing link copied. Open AnkiCompanion on your phone, tap Connection, and paste this link. Your PC must stay on. The free tunnel address may change after a reboot.')
         job=self.launch(first_run.pair_phone,paired)
         job.failed.connect(lambda _:setattr(self,'_pairing_active',False))
+
+    def export_google_cloud(self):
+        # One-time source-server transfer. No PowerShell or installer reset.
+        filename,_=QFileDialog.getSaveFileName(self,'Export existing server for Google Cloud',
+            str(Path.home()/'Downloads'/'AnkiCompanion-Server-Migration.zip'),
+            'ZIP archive (*.zip)')
+        if not filename:return
+        def finished(path):
+            QMessageBox.information(self,'Google Cloud migration archive created',
+                'Verified server archive saved. It contains your private token, study history and skins. '
+                'In Google Cloud Console open the VM SSH browser, choose Upload File and select this ZIP; '
+                'then restart the VM from the Console. The original PC files remain untouched. '
+                'Delete your local ZIP after the migration is verified.')
+        self.launch(lambda:first_run.export_hosted_state(filename),finished)
 
     def connect_dialog(self):
         dialog=QDialog(self);dialog.setWindowTitle('Connect companion server');form=QFormLayout(dialog)
@@ -302,12 +364,15 @@ class Window(QMainWindow):
                         payload=dict(self.current['settings'],update_repository=repository.strip())
                         self.launch(lambda:self.client().request('/v1/settings','PUT',payload),lambda _:self.check_updates(True))
                 return
-            self.update_button.setText(('Update to '+release['version']) if release.get('available') else ('Up to date · '+updates.version()['version']))
+            self.update_button.setText(('Update Windows bundle to '+release['version']) if release.get('available') else ('Windows bundle up to date · '+updates.version()['version']))
             if release.get('available'):
                 if not interactive:
                     if self.tray.isVisible():self.tray.showMessage('Anki Companion update','Version '+release['version']+' is ready. Open the app and click Update.')
                     return
+                components=updates.component_update_summary(
+                    release,remote_server=first_run.has_remote_connection(self.config))
                 text=release.get('notes','')[:1500]+'\n\nSource commit: '+release.get('commit','')
+                text+='\n\nComponent updates:\n'+components
                 if QMessageBox.question(self,'Update to '+release['version'],text+'\n\nDownload and update?')==QMessageBox.StandardButton.Yes:
                     def ready(path):
                         try:updates.install(path,release);self.quit_app()
@@ -322,15 +387,39 @@ class Window(QMainWindow):
         event.ignore()
         self.show_dock()
     def quit_app(self):
-        self.quitting=True;self.timer.stop();self.update_timer.stop();self.hide();self.dock.hide();self.tray.hide()
+        self.quitting=True;self.timer.stop();self.update_timer.stop();self.bridge_timer.stop();self.hide();self.dock.hide();self.tray.hide()
         # Let network workers finish before destroying their QThread objects.
         if self.jobs:QTimer.singleShot(100,self.quit_app)
         else:QApplication.instance().quit()
 
 STYLE='''QWidget{background:#121418;color:#eee6db;font-family:"DejaVu Sans";font-size:13px} QLabel#title{font-size:18px;font-weight:700;letter-spacing:2px} QLabel#muted{color:#9a9da3;font-size:11px} QPushButton,QComboBox,QLineEdit,QSpinBox{background:#22252b;border:1px solid #363a42;border-radius:7px;padding:9px} QPushButton:hover{border-color:#f19a4c} QPushButton#primary{background:#ee9147;color:#17120e;font-weight:700} QProgressBar{border:0;background:#2e3036;border-radius:3px} QProgressBar::chunk{background:#ef944a;border-radius:3px}'''
 
+def _ci_signal_gui_ready(window):
+    """Test-only proof the *installed* Qt window reached its event loop.
+
+    A running EXE alone is not evidence that the actual window initialized.
+    No private study state, pairing tokens, or Anki profile data is written.
+    """
+    target = os.environ.get('ANKI_COMPANION_CI_READY_FILE')
+    if not target or os.environ.get('CI', '').lower() != 'true':
+        return
+    if not window.isVisible() or QApplication.instance() is None:
+        raise RuntimeError('Installed companion GUI did not become visible')
+    path = Path(target)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(path.name + '.pending')
+    temp.write_text(json.dumps({
+        'pid': os.getpid(), 'qt_window_visible': True,
+        'qt_event_loop_started': True,
+        'title': window.windowTitle(),
+    }, sort_keys=True), encoding='utf-8')
+    temp.replace(path)
+
+
 def main():
     app=QApplication(sys.argv);app.setApplicationName('AnkiCompanion');app.setOrganizationName('AnkiCompanion');app.setQuitOnLastWindowClosed(False);app.setStyleSheet(STYLE)
-    window=Window();window.show();sys.exit(app.exec())
+    window=Window();window.show()
+    QTimer.singleShot(0, lambda: _ci_signal_gui_ready(window))
+    sys.exit(app.exec())
 
 if __name__=='__main__':main()

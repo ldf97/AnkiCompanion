@@ -9,6 +9,18 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  gcp-infrastructure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+      - name: Validate Google Compute Engine and persistent disk infrastructure
+        run: |
+          terraform -chdir=deployment/google-cloud init -backend=false -input=false
+          terraform -chdir=deployment/google-cloud validate -no-color
   python:
     runs-on: ubuntu-24.04
     env:
@@ -85,6 +97,45 @@ jobs:
             }
             if (-not $healthy) { throw 'Installed server did not become healthy' }
           } finally { Stop-Process -Id $server.Id -ErrorAction SilentlyContinue }
+          # Repeat a normal Windows installer update WITHOUT uninstalling.
+          # Real server data lives under LOCALAPPDATA, outside the code folder.
+          Start-Sleep -Seconds 2
+          $data=Join-Path $env:LOCALAPPDATA 'AnkiCompanion\server'
+          $token=Join-Path $data 'token.txt'
+          $db=Join-Path $data 'companion.sqlite3'
+          if (!(Test-Path $token) -or !(Test-Path $db)) { throw 'Server data missing after first installation' }
+          $privateDir=Join-Path $data 'packs\private_ci\1.0.0'
+          New-Item -ItemType Directory -Force -Path $privateDir | Out-Null
+          $artwork=Join-Path $privateDir 'personal-artwork-fixture.bin'
+          [IO.File]::WriteAllBytes($artwork,[byte[]](1,2,3,4,5,6,7,8))
+          $pathList=@($token,$db,$artwork)
+          $before=@($pathList | ForEach-Object { (Get-FileHash $_ -Algorithm SHA256).Hash })
+          $replacement=Start-Process packages/AnkiCompanion-Windows-Setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=installer-repeat.log' -Wait -PassThru
+          if ($replacement.ExitCode -ne 0) { throw "In-place installer upgrade failed: $($replacement.ExitCode)" }
+          $after=@($pathList | ForEach-Object { (Get-FileHash $_ -Algorithm SHA256).Hash })
+          for ($i=0; $i -lt $before.Length; $i++) {
+            if ($before[$i] -ne $after[$i]) { throw "Installed update changed private data file: $($pathList[$i])" }
+          }
+          Write-Host 'PASS: repeated Windows installer preserved original SQLite, token and private artwork without a restore.'
+      - name: Launch actual installed Windows companion desktop after in-place installer update
+        timeout-minutes: 3
+        shell: pwsh
+        run: python scripts/ci_windows_installed_app.py
+      - name: Launch real Anki 26.9.3 with AnkiCompanion on isolated Windows 11 x64 profile
+        timeout-minutes: 5
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_OPENGL: software
+          QSG_RHI_BACKEND: software
+          QTWEBENGINE_DISABLE_SANDBOX: '1'
+        run: |
+          # Anki uses PyQt6/QtWebEngine. The companion UI uses PySide6.
+          # Their packaged Qt DLLs must never be mixed in one Python process.
+          python -m venv "$env:RUNNER_TEMP/aqt-isolated"
+          & "$env:RUNNER_TEMP/aqt-isolated/Scripts/python.exe" -m pip install --disable-pip-version-check aqt==26.9.3 PyQt6==6.11.0 PyQt6-Qt6==6.11.2 PyQt6-WebEngine==6.11.0 PyQt6-WebEngine-Qt6==6.11.2
+          & "$env:RUNNER_TEMP/aqt-isolated/Scripts/python.exe" scripts/ci_windows_anki_launcher.py
+          if ($LASTEXITCODE -ne 0) { throw 'Real Anki launcher smoke failed' }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -95,10 +146,15 @@ jobs:
             test-results/
             *smoke*.log
             installer-smoke.log
+            installer-repeat.log
 
   emulator:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [28, 33, 35, 36]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -113,15 +169,15 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: ${{ matrix.api-level }}
           arch: x86_64
           profile: pixel_6
           disable-animations: false
-          script: bash scripts/check_android_emulator.sh
+          script: bash scripts/check_android_emulator.sh ${{ matrix.api-level }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: android-emulator-evidence
+          name: android-emulator-api-${{ matrix.api-level }}
           path: |
             android/app/build/reports/androidTests/
             android/app/build/outputs/androidTest-results/
@@ -139,7 +195,7 @@ jobs:
           path: ankidroid-upstream
       - uses: actions/setup-java@v4
         with:
-          distribution: jetbrains
+          distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - name: Apply reviewed companion overlay
@@ -194,8 +250,36 @@ jobs:
           profile: pixel_6
           disable-animations: false
           script: bash scripts/check_cross_device.sh
+      - name: Assert native card scheduling and both real widget checkpoints
+        run: python scripts/assert_cross_device_evidence.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: cross-device-acceptance-evidence
           path: test-results/cross-device/
+
+  acceptance:
+    needs: [python, android, ankidroid, gcp-infrastructure, windows, emulator, cross-device]
+    runs-on: ubuntu-24.04
+    if: always()
+    steps:
+      - name: Gate complete installed-app and native cross-device acceptance
+        shell: bash
+        run: |
+          results=(
+            "${{ needs.python.result }}"
+            "${{ needs.android.result }}"
+            "${{ needs.ankidroid.result }}"
+            "${{ needs['gcp-infrastructure'].result }}"
+            "${{ needs.windows.result }}"
+            "${{ needs.emulator.result }}"
+            "${{ needs.cross-device.result }}"
+          )
+          printf 'Acceptance results: %s\n' "${results[*]}"
+          for result in "${results[@]}"; do
+            if [ "$result" != 'success' ]; then
+              echo "Refusing acceptance: required CI job did not pass ($result)" >&2
+              exit 1
+            fi
+          done
+          echo 'PASS: entire installed app + native cross-device suite is green'

@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from pathlib import Path
 import sqlite3, json, secrets, time, threading
 from companion.rules import study_day, daily_lineup, lesson_progress
+from companion.consistency import shared_revision
 from .models import Settings
 
 class Conflict(ValueError): pass
@@ -11,7 +12,14 @@ class Store:
     def __init__(self, path):
         self.path = Path(path); self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
+        existing_database=self.path.exists() and self.path.stat().st_size>0
         with self.tx() as db:
+            if existing_database:
+                tables={row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                if 'meta' not in tables or 'events' not in tables:
+                    raise RuntimeError('Existing study database is missing required tables; refusing to initialize over user data')
+                if db.execute("SELECT 1 FROM meta WHERE key='settings'").fetchone() is None:
+                    raise RuntimeError('Existing study database has no settings; refusing to replace user preferences')
             db.executescript('''
             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, payload TEXT NOT NULL,
@@ -23,7 +31,20 @@ class Store:
             CREATE TABLE IF NOT EXISTS snapshots(device TEXT PRIMARY KEY, payload TEXT NOT NULL, updated INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY, device TEXT NOT NULL,
                 payload TEXT NOT NULL, created INTEGER NOT NULL, acknowledged INTEGER NOT NULL DEFAULT 0);
+            -- Native collection sync must succeed before announcing a scheduling revision.
+            CREATE TABLE IF NOT EXISTS sync_versions(collection TEXT PRIMARY KEY,
+                revision INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS sync_receipts(collection TEXT NOT NULL, device TEXT NOT NULL,
+                applied_revision INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(collection,device));
+            CREATE TABLE IF NOT EXISTS sync_pending(collection TEXT NOT NULL, device TEXT NOT NULL,
+                dirty INTEGER NOT NULL DEFAULT 0, latest_event_ms INTEGER NOT NULL DEFAULT 0,
+                ticket TEXT NOT NULL DEFAULT '', PRIMARY KEY(collection,device));
             ''')
+            # Add the ticket to existing deployments without erasing histories.
+            cols={row['name'] for row in db.execute('PRAGMA table_info(sync_pending)')}
+            if 'ticket' not in cols:
+                db.execute("ALTER TABLE sync_pending ADD COLUMN ticket TEXT NOT NULL DEFAULT ''")
             db.execute('INSERT OR IGNORE INTO meta VALUES (?,?)', ('settings', Settings(revision=0).model_dump_json()))
             db.execute('INSERT OR IGNORE INTO meta VALUES (?,?)', ('seed', secrets.token_hex(24)))
 
@@ -89,30 +110,140 @@ class Store:
             for event in events:
                 if event.revlog_id > now_ms + 300_000: raise ValueError('Review event is in the future')
                 if event.revlog_id < 946684800000: raise ValueError('Invalid review timestamp')
-                payload = event.model_dump_json()
+                # The server is authoritative for the original source device:
+                # untrusted clients cannot claim another origin in their event.
+                payload = json.dumps(dict(event.model_dump(), origin_device_id=device_id))
                 db.execute('INSERT OR REPLACE INTO event_sources VALUES (?,?,?)',(event.key,device_id,now_ms))
                 row = db.execute('SELECT payload FROM events WHERE id=?', (event.key,)).fetchone()
                 if row:
-                    if row['payload'] != payload: raise Conflict('Event ID reused with different contents')
+                    # Old clients sent no rating/interval metadata. Later reports of
+                    # that same review may enrich, never increment, the event.
+                    previous=json.loads(row['payload'])
+                    current=json.loads(payload)
+                    if any(previous.get(k)!=current.get(k) for k in
+                           ('collection_id','revlog_id','card_id','duration_ms')):
+                        raise Conflict('Event ID reused with different contents')
+                    for field in ('rating','interval','previous_interval'):
+                        before=previous.get(field);after=current.get(field)
+                        if before is not None and after is not None and before!=after:
+                            raise Conflict('Review metadata conflicts with previously recorded answer')
+                        if before is None and after is not None:previous[field]=after
+                    if previous!=json.loads(row['payload']):
+                        db.execute('UPDATE events SET payload=? WHERE id=?',(json.dumps(previous),event.key))
                     continue
                 day = study_day(event.revlog_id, settings['timezone'], settings['rollover_minute'])
                 self._day(db, day, packs)
                 undone = bool(db.execute('SELECT 1 FROM tombstones WHERE id=?', (event.key,)).fetchone())
                 db.execute('INSERT INTO events VALUES (?,?,?,?,?)', (event.key, payload, day, event.duration_ms, int(undone)))
+                ticket=secrets.token_hex(16)
+                db.execute('''INSERT INTO sync_pending(collection,device,dirty,latest_event_ms,ticket)
+                    VALUES(?,?,1,?,?) ON CONFLICT(collection,device) DO UPDATE SET
+                    dirty=1,latest_event_ms=MAX(sync_pending.latest_event_ms,excluded.latest_event_ms),
+                    ticket=excluded.ticket''',
+                    (event.collection_id,device_id,event.revlog_id,ticket))
                 inserted += 1
-            return dict(inserted=inserted, received=len(events))
+            tickets={}
+            for collection in {event.collection_id for event in events}:
+                row=db.execute('SELECT ticket FROM sync_pending WHERE collection=? AND device=? AND dirty=1',
+                               (collection,device_id)).fetchone()
+                if row and row['ticket']:tickets[collection]=row['ticket']
+            return dict(inserted=inserted, received=len(events),native_upload_tickets=tickets)
 
-    def retract(self, ids):
+
+    def audit_events(self, after='', limit=100):
+        """Stable, paginated review audit with all reporting devices.
+
+        This is authenticated by the route. Native Anki remains the source
+        of scheduling; returned events are recorded review evidence only.
+        """
+        if len(after)>250 or not 1<=limit<=500:
+            raise ValueError('Invalid audit cursor or page length')
+        with self.tx() as db:
+            rows=db.execute(
+                'SELECT id,payload,day,retracted FROM events WHERE id>? ORDER BY id LIMIT ?',
+                (after,limit+1)).fetchall()
+            selected=rows[:limit]
+            identities=[r['id'] for r in selected]
+            sources={key:[] for key in identities}
+            if identities:
+                marks=','.join('?' for _ in identities)
+                for source in db.execute(
+                    f'SELECT id,device FROM event_sources WHERE id IN ({marks}) ORDER BY seen_ms,device',
+                    identities):
+                    sources[source['id']].append(source['device'])
+            events=[]
+            for row in selected:
+                value=json.loads(row['payload'])
+                value.setdefault('schema_version',1)
+                value.setdefault('origin_device_id',sources[row['id']][0] if sources[row['id']] else 'unknown')
+                value.update(id=row['id'],study_day=row['day'],retracted=bool(row['retracted']),
+                             observed_on_devices=sources[row['id']])
+                events.append(value)
+            return dict(events=events,next_cursor=selected[-1]['id'] if len(rows)>limit else None)
+
+    def retract(self, ids, device_id='unknown', now_ms=None):
+        # Removing a review also changes its native collection scheduling;
+        # queue that change for native synchronization, independently of totals.
+        now_ms = now_ms or int(time.time()*1000)
         with self.tx() as db:
             for identity in ids:
                 if len(identity) > 250: raise ValueError('Event ID too long')
                 db.execute('INSERT OR IGNORE INTO tombstones VALUES (?)', (identity,))
                 db.execute('UPDATE events SET retracted=1 WHERE id=?', (identity,))
+                row=db.execute('SELECT payload FROM events WHERE id=?',(identity,)).fetchone()
+                if row:
+                    collection=json.loads(row['payload'])['collection_id']
+                    ticket=secrets.token_hex(16)
+                    db.execute('''INSERT INTO sync_pending(collection,device,dirty,latest_event_ms,ticket)
+                        VALUES(?,?,1,?,?) ON CONFLICT(collection,device) DO UPDATE SET
+                        dirty=1,latest_event_ms=MAX(sync_pending.latest_event_ms,excluded.latest_event_ms),
+                        ticket=excluded.ticket''',
+                        (collection,device_id,now_ms,ticket))
 
     def snapshot(self, snapshot, now_ms):
         with self.tx() as db:
             db.execute('INSERT OR REPLACE INTO snapshots VALUES (?,?,?)',
                 (snapshot.device_id, snapshot.model_dump_json(), now_ms))
+            collection=snapshot.collection_id
+            db.execute('INSERT OR IGNORE INTO sync_versions(collection,revision) VALUES (?,0)',(collection,))
+            current=db.execute('SELECT revision FROM sync_versions WHERE collection=?',(collection,)).fetchone()[0]
+            if snapshot.sync_status in ('synced','native Anki sync') and snapshot.collection_synced_ms>0:
+                pending=db.execute('SELECT * FROM sync_pending WHERE collection=? AND device=?',
+                                   (collection,snapshot.device_id)).fetchone()
+                # Native-sync tickets prove that THIS source's event batch had
+                # reached AnkiWeb. Wall-clock timestamps cannot prove this:
+                # phone/laptop/server clocks can disagree or native sync can
+                # complete before the event reaches the companion server.
+                if (pending and pending['dirty'] and pending['ticket'] and
+                        secrets.compare_digest(snapshot.native_upload_ticket,pending['ticket'])):
+                    current+=1
+                    db.execute('UPDATE sync_versions SET revision=? WHERE collection=?',(current,collection))
+                    db.execute("UPDATE sync_pending SET dirty=0,ticket='' WHERE collection=? AND device=?",
+                               (collection,snapshot.device_id))
+                    # The origin already has its own reviews. No redundant ping.
+                    db.execute('''INSERT INTO sync_receipts VALUES (?,?,?)
+                        ON CONFLICT(collection,device) DO UPDATE SET
+                        applied_revision=MAX(sync_receipts.applied_revision,excluded.applied_revision)''',
+                        (collection,snapshot.device_id,current))
+                if snapshot.applied_revision:
+                    applied=min(snapshot.applied_revision,current)
+                    db.execute('''INSERT INTO sync_receipts VALUES (?,?,?)
+                        ON CONFLICT(collection,device) DO UPDATE SET
+                        applied_revision=MAX(sync_receipts.applied_revision,excluded.applied_revision)''',
+                        (collection,snapshot.device_id,applied))
+
+    def sync_status(self, device_id, collection_id='primary'):
+        with self.tx() as db:
+            source=db.execute('SELECT revision FROM sync_versions WHERE collection=?',(collection_id,)).fetchone()
+            latest=int(source[0]) if source else 0
+            receipt=db.execute('SELECT applied_revision FROM sync_receipts WHERE collection=? AND device=?',
+                               (collection_id,device_id)).fetchone()
+            applied=int(receipt[0]) if receipt else 0
+            outgoing=db.execute('SELECT ticket FROM sync_pending WHERE collection=? AND device=? AND dirty=1',
+                                (collection_id,device_id)).fetchone()
+            return {'collection_id':collection_id,'revision':latest,
+                    'applied_revision':applied,'pending':latest>applied,
+                    'outgoing_ticket':outgoing['ticket'] if outgoing else ''}
 
     def state(self, packs, now_ms):
         with self.tx() as db:
@@ -130,16 +261,35 @@ class Store:
                 streak += 1; cursor -= timedelta(days=1)
             devices = [dict(**json.loads(r['payload']), updated_ms=r['updated'])
                        for r in db.execute('SELECT * FROM snapshots ORDER BY updated DESC')]
+            versions={r['collection']:r['revision'] for r in
+                      db.execute('SELECT collection,revision FROM sync_versions')}
+            receipts={(r['collection'],r['device']):r['applied_revision'] for r in
+                      db.execute('SELECT collection,device,applied_revision FROM sync_receipts')}
+            for device in devices:
+                collection=device.get('collection_id','primary')
+                latest=versions.get(collection,0)
+                applied=receipts.get((collection,device['device_id']),0)
+                # A valid scheduling receipt is not proof that the device is
+                # currently online; report observed liveness separately.
+                age=max(0,int((now_ms-device['updated_ms'])/1000))
+                device['age_seconds']=age
+                device['online']=age<=120
+                device['native_sync']=dict(revision=latest,applied_revision=applied,
+                                            pending=latest>applied)
             history = [dict(date=(date.fromisoformat(today)-timedelta(days=i)).isoformat(),
                             completed=(date.fromisoformat(today)-timedelta(days=i)).isoformat() in complete)
                        for i in reversed(range(7))]
             today_events = [dict(id=r['id'], duration_ms=r['duration_ms']) for r in
-                db.execute('SELECT id,duration_ms FROM events WHERE day=? AND retracted=0', (today,))]
+                db.execute('SELECT id,duration_ms FROM events WHERE day=? AND retracted=0 ORDER BY id', (today,))]
             progress=lesson_progress(**totals.get(today,dict(answers=0,duration_ms=0)),policy=policy)
-            return dict(server_time_ms=now_ms, date=today, settings=settings, policy=policy,
-                        lineup=lineup, seed=db.execute("SELECT value FROM meta WHERE key='seed'").fetchone()[0],
-                        completed=done, streak=streak, progress=progress,
-                        today_events=today_events, devices=devices, week=history)
+            state = dict(server_time_ms=now_ms, date=today, settings=settings, policy=policy,
+                         lineup=lineup, seed=db.execute("SELECT value FROM meta WHERE key='seed'").fetchone()[0],
+                         completed=done, streak=streak, progress=progress,
+                         today_events=today_events, devices=devices, week=history)
+            # A single server-confirmed version for all devices, unaffected by
+            # polling time, one device's liveness, or native sync receipts.
+            state['shared_revision'] = shared_revision(state)
+            return state
 
     def enqueue(self, command, now_ms):
         identity = secrets.token_hex(12)

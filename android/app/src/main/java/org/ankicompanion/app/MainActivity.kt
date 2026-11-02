@@ -23,12 +23,14 @@ class MainActivity:Activity() {
     private lateinit var parent:Spinner
     private lateinit var mode:Spinner
     private lateinit var updateButton:Button
+    private lateinit var ankidroidUpdateButton:Button
     private var state:JSONObject?=null
     private var decks=listOf<JSONObject>()
     private var renderedKey=""
     private var busy=false
     private var resumed=false
     private var pendingStudy=false
+    private var recoveryPassphrase:String?=null
     private val handler=Handler(Looper.getMainLooper())
     private val ticker=object:Runnable {override fun run(){if(resumed){refresh();handler.postDelayed(this,5000)}}}
     private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
@@ -50,19 +52,38 @@ class MainActivity:Activity() {
         val actions=LinearLayout(this);actions.addView(button("Anki access"){requestAnki()});actions.addView(button("Refresh"){refresh()});actions.addView(button("Sync AnkiDroid"){try{AnkiBridge.nativeSync(this)}catch(e:Exception){status.text=e.message}});box.addView(actions)
         val settings=LinearLayout(this);settings.addView(button("Lesson & day"){goals()});settings.addView(button("Skins"){skins()});box.addView(settings)
         updateButton=button("Updates · "+BuildConfig.VERSION_NAME){updates()};box.addView(updateButton)
+        ankidroidUpdateButton=button("AnkiDroid Companion updates"){ankidroidUpdates()};box.addView(ankidroidUpdateButton)
+        box.addView(button("Update signing diagnostics"){signingDiagnostics()})
+        box.addView(button("Portable recovery · incompatible signing only"){recoveryMenu()})
         box.addView(button("Live widget updates"){LiveSyncService.start(this)})
         bridge=text("",12f);bridge.setTextColor(Color.rgb(160,164,173));box.addView(bridge)
         box.addView(text("A lesson maintains your streak. Anki decides which cards are available.",12f))
         Sync.schedule(this)
         storage.load("state.json")?.let{show(it)}
         if(intent.getBooleanExtra("updates",false))handler.post{updates()}
+        if(intent.getBooleanExtra("ankidroid_updates",false))handler.post{ankidroidUpdates()}
         if(intent.getBooleanExtra("widget_setup",false))handler.post{
             AlertDialog.Builder(this).setTitle("Choose the widget's study deck")
                 .setMessage("Choose your parent deck (for example, the parent containing Eicosanoids), then tap Save deck settings. The widget will open the next eligible subdeck, or the parent when no child is due.")
                 .setPositiveButton("OK",null).show()
         }
     }
-    override fun onResume(){super.onResume();resumed=true;handler.removeCallbacks(ticker);handler.post(ticker)}
+    override fun onResume(){
+        super.onResume();resumed=true;handler.removeCallbacks(ticker);handler.post(ticker)
+        // Return from Android's one-time "Install unknown apps" permission
+        // screen and continue the same verified, already downloaded APK.
+        // Do not open a second permission screen if the user declined.
+        val saved=storage.getSetting("pending_update_path")
+        if(saved.isNotBlank() && packageManager.canRequestPackageInstalls()) {
+            val candidate=File(saved).canonicalFile
+            val updateDirectory=File(filesDir,"updates").canonicalFile
+            if(candidate.parentFile==updateDirectory && candidate.isFile && candidate.name.endsWith(".apk")) {
+                handler.post { try {
+                    if(Updates.install(this,candidate))storage.setSetting("pending_update_path","")
+                }catch(e:Exception){status.text=e.message ?: "Update installation failed"} }
+            } else storage.setSetting("pending_update_path","")
+        }
+    }
     override fun onPause(){resumed=false;handler.removeCallbacks(ticker);super.onPause()}
     private fun async(work:()->Any?,after:(Any?)->Unit={refresh()}) {
         Sync.executor.execute {
@@ -82,9 +103,38 @@ class MainActivity:Activity() {
         val first=state==null;state=value
         val error=storage.getSetting("sync_error")
         status.text=if(error.isEmpty())"Connected · "+value.getString("date") else "Offline · cached progress · "+value.getString("date")
-        status.append(" · updated ${(System.currentTimeMillis()-value.getLong("server_time_ms"))/1000}s ago")
+        status.append(" · updated ${((System.currentTimeMillis()-value.getLong("server_time_ms"))/1000).coerceAtLeast(0)}s ago")
+        val localPending=value.optInt("locally_pending",0)
+        value.optString("shared_revision").takeIf{it.length>=8}?.let {status.append(" · confirmed state "+it.take(8))}
+        if(localPending>0)status.append(" · $localPending provisional answer(s) awaiting server acknowledgement")
+        val native=value.optJSONObject("native_sync")
+        if(native!=null) {
+            val revision=native.optLong("revision",0)
+            val applied=native.optLong("applied_revision",0)
+            if(native.optBoolean("pending"))status.append(" · Anki sync pending $applied/$revision")
+            else if(revision>0L && applied>=revision)status.append(" · Anki sync confirmed $applied/$revision")
+            else status.append(" · Anki sync not yet verified")
+        }
+        // A connected server can acknowledge answers without proving native
+        // Anki scheduling convergence. Surface the bridge's true error too.
+        val bridgeIssue=storage.getSetting("bridge_status")
+        if(bridgeIssue.startsWith("Scheduling sync pending:"))status.append(" · $bridgeIssue")
+        // Server-reported native receipt and observed device liveness are
+        // independent: a synced/offline laptop is NOT marked online.
+        value.optJSONArray("devices")?.objects()?.take(3)?.forEach { device ->
+            val label=device.optString("label","Device").take(40)
+            val age=device.optLong("age_seconds",0)
+            val live=if(device.optBoolean("online",false))"online" else "offline (last seen ${age}s ago)"
+            val receipt=device.optJSONObject("native_sync")
+            val revision=receipt?.optLong("revision",0) ?: 0L
+            val applied=receipt?.optLong("applied_revision",0) ?: 0L
+            val info=if(revision>applied)"Anki sync pending $applied/$revision"
+                     else if(revision>0L)"Anki sync confirmed $applied/$revision"
+                     else "Anki sync not yet verified"
+            status.append(" · $label: $live; $info")
+        }
         val p=value.getJSONObject("progress");val goal=if(value.optString("local_day",value.getString("date"))==value.getString("date"))value.getJSONObject("policy") else value.getJSONObject("settings")
-        progress.text="${p.getInt("answers")}/${goal.getInt("lesson_answers")} · ${minOf(100,p.getInt("answers")*100/goal.getInt("lesson_answers"))}% · ${maxOf(0,goal.getInt("lesson_answers")-p.getInt("answers"))} remaining · ${p.getInt("duration_ms")/1000} / ${goal.getInt("lesson_ms")/1000} active seconds · ${value.getInt("streak")} day streak"
+        progress.text="${p.getInt("answers")}/${goal.getInt("lesson_answers")} · ${minOf(100,p.getInt("answers")*100/goal.getInt("lesson_answers"))}% · ${maxOf(0,goal.getInt("lesson_answers")-p.getInt("answers"))} remaining · ${p.getInt("duration_ms")/1000} / ${goal.getInt("lesson_ms")/1000} active seconds · ${value.getInt("streak")} day streak" + if(localPending>0)" (pending confirmation)" else ""
         bridge.text=storage.getSetting("bridge_status")
         val line=value.getJSONObject("lineup");val key=line.toString()+value.getBoolean("completed")+value.getInt("streak")+System.currentTimeMillis()/60000
         if(key!=renderedKey) {
@@ -97,7 +147,11 @@ class MainActivity:Activity() {
             val index=decks.indexOfFirst{it.getString("id")==value.getJSONObject("settings").getString("parent_deck_id")};if(index>=0)parent.setSelection(index)
         } else decks=latest
         if(first)mode.setSelection(if(value.getJSONObject("settings").getString("clearance")=="new_only")0 else 1)
-        val update=storage.load("update.json");updateButton.text=if(update?.optBoolean("available")==true)"Update to "+update.optString("version") else "Updates · "+BuildConfig.VERSION_NAME
+        val update=storage.load("update.json");updateButton.text=if(update?.optBoolean("available")==true)"Update Android Companion to "+update.optString("version") else "Android Companion updates · "+BuildConfig.VERSION_NAME
+        val ankidroidUpdate=storage.load("ankidroid-update.json")
+        ankidroidUpdateButton.text=if(ankidroidUpdate?.optBoolean("available")==true)
+            "Update AnkiDroid Companion to "+ankidroidUpdate.optString("version")
+            else "AnkiDroid Companion updates · check separately"
     }
     private fun connect() {
         val old=storage.connection() ?: JSONObject();val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(20),0,dp(20),0)}
@@ -138,6 +192,7 @@ class MainActivity:Activity() {
         val current=state ?: return
         if(!AnkiBridge.permitted(this)){requestAnki();return}
         val s=current.getJSONObject("settings")
+        status.text="Checking Anki scheduling before opening your deck…"
         async({
             AnkiBridge.configure(applicationContext,s)
             AnkiBridge.synchronize(applicationContext)
@@ -168,6 +223,21 @@ class MainActivity:Activity() {
     }
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
         super.onActivityResult(requestCode,resultCode,data)
+        if(requestCode==40 || requestCode==41) {
+            val passphrase=recoveryPassphrase
+            recoveryPassphrase=null
+            if(resultCode==RESULT_OK && data?.data!=null && passphrase!=null) {
+                val uri=data.data!!
+                if(requestCode==40)async({Portability.exportToUri(applicationContext,uri,passphrase);"Encrypted recovery saved"}) {
+                    status.text="Encrypted recovery saved. Your original installation and data are unchanged."
+                }
+                else async({Portability.restoreFromUri(applicationContext,uri,passphrase)}) {result->
+                    status.text="Recovery restored ${result as Int} local review records. Reconnect and verify progress."
+                    refresh()
+                }
+            }
+            return
+        }
         if(requestCode==10 && resultCode==RESULT_OK && data?.data!=null) {
             val uri=data.data!!
             async({
@@ -176,6 +246,62 @@ class MainActivity:Activity() {
             })
         }
     }
+    private fun recoveryMenu() {
+        AlertDialog.Builder(this).setTitle("Portable encrypted recovery")
+            .setMessage("Normal software updates preserve data automatically. Use this only for exceptional signing-key migrations. Android may require its own confirmation to remove an incompatible old installation.")
+            .setPositiveButton("Export recovery"){_,_->promptRecovery(false)}
+            .setNeutralButton("Restore recovery"){_,_->promptRecovery(true)}
+            .setNegativeButton("Cancel",null).show()
+    }
+    private fun promptRecovery(restore:Boolean) {
+        val input=EditText(this).apply{
+            hint="Recovery passphrase · at least 12 characters"
+            inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        AlertDialog.Builder(this).setTitle(if(restore)"Unlock recovery" else "Encrypt recovery")
+            .setMessage("The passphrase protects your pairing token, review queue, and settings. It cannot be recovered if lost.")
+            .setView(input).setNegativeButton("Cancel",null).setPositiveButton("Continue"){_,_->
+                val chosen=input.text.toString()
+                if(chosen.length<12){status.text="Recovery passphrase must be at least 12 characters"}
+                else {
+                    recoveryPassphrase=chosen
+                    val intent=if(restore)Intent(Intent.ACTION_OPEN_DOCUMENT) else Intent(Intent.ACTION_CREATE_DOCUMENT)
+                    intent.addCategory(Intent.CATEGORY_OPENABLE).setType("application/octet-stream")
+                    if(!restore)intent.putExtra(Intent.EXTRA_TITLE,"AnkiCompanion-Recovery.acrec")
+                    startActivityForResult(intent,if(restore)41 else 40)
+                }
+            }.show()
+    }
+    private fun signingDiagnostics() {
+        val stable="c6a5e9f1804fdf1083c69e36e03e3a424a0e630e357b573d8a523eea09cea004"
+        val companion=Updates.signingFingerprint(this,packageName)
+        val ankidroid=Updates.signingFingerprint(this,"com.ichi2.anki.companion")
+        val message="Phone AnkiCompanion signer:\n$companion\n\nAnkiDroid Companion signer:\n$ankidroid\n\nStable release signer:\n$stable\n\nAn update can preserve app data only when Android accepts its signing identity."
+        AlertDialog.Builder(this).setTitle("Update compatibility").setMessage(message).setPositiveButton("OK",null).show()
+    }
+    private fun ankidroidUpdates() {
+        status.text="Checking production-signed AnkiDroid Companion release…"
+        async({Updates.checkAnkiDroid(applicationContext,true)}){result->
+            val release=result as? JSONObject ?: return@async
+            if(!release.optBoolean("available")){status.text=release.optString("message","No newer release");return@async}
+            val installed=Updates.signingFingerprint(this,"com.ichi2.anki.companion")!="Not installed"
+            AlertDialog.Builder(this).setTitle(if(installed)"Update AnkiDroid Companion" else "Install AnkiDroid Companion")
+                .setMessage("Use the production-signed ${release.optString("version")} package. Review data stays in AnkiDroid and native AnkiWeb sync.")
+                .setNegativeButton("Later",null).setPositiveButton("Continue"){_,_->
+                    status.text="Downloading and checking AnkiDroid Companion…"
+                    async({Updates.download(applicationContext,api(),release)}){file->installDownloaded(file as File)}
+                }.show()
+        }
+    }
+    private fun installDownloaded(file:File) {
+        // Remember a verified package if Android requires one-time permission.
+        // No export, reinstall or manual file selection is needed.
+        val candidate=file.canonicalFile
+        require(candidate.parentFile==File(filesDir,"updates").canonicalFile){"Unexpected installer location"}
+        storage.setSetting("pending_update_path",candidate.path)
+        if(Updates.install(this,candidate))storage.setSetting("pending_update_path","")
+    }
+
     private fun updates() {
         status.text="Checking GitHub release…"
         async({Updates.check(applicationContext,api(),true)}){result->
@@ -183,7 +309,7 @@ class MainActivity:Activity() {
             if(!release.optBoolean("available")){status.text=release.optString("message","No newer release");return@async}
             AlertDialog.Builder(this).setTitle("Update to "+release.getString("version")).setMessage(release.optString("notes")+"\nSource commit: "+release.optString("commit")).setNegativeButton("Later",null).setPositiveButton("Update"){_,_->
                 status.text="Downloading and verifying update…"
-                async({Updates.download(applicationContext,api(),release)}){file->Updates.install(this,file as File)}
+                async({Updates.download(applicationContext,api(),release)}){file->installDownloaded(file as File)}
             }.show()
         }
     }

@@ -115,3 +115,47 @@ def test_github_unsigned_release_cannot_launch_arbitrary_executable(tmp_path,mon
     executable=tmp_path/'some-installer.exe';executable.write_bytes(b'x')
     monkeypatch.setattr(updates.sys,'platform','win32')
     with pytest.raises(ValueError,match='official'):updates.install(executable,None)
+
+
+def test_in_app_windows_update_preserves_server_before_installer_launch(tmp_path,monkeypatch):
+    from companion import updates
+    from server.main import create_app
+    from server.backup import verify_snapshot
+    import zipfile
+    appdata=tmp_path/'AppDataLocal';root=appdata/'AnkiCompanion';data=root/'server'
+    create_app(data)
+    token=(data/'token.txt').read_bytes()
+    private=data/'packs'/'eren_anki'/'1.0.0'/'private.png'
+    private.parent.mkdir(parents=True)
+    private.write_bytes(b'original owner artwork')
+    package=tmp_path/'AnkiCompanion-Windows-Setup.exe';package.write_bytes(b'verified update')
+    release={'download_url':updates.PUBLIC_RELEASES+package.name,
+             'filename':package.name,'sha256':hashlib.sha256(package.read_bytes()).hexdigest(),
+             'size':package.stat().st_size}
+    monkeypatch.setenv('LOCALAPPDATA',str(appdata))
+    monkeypatch.setattr(updates.sys,'platform','win32')
+    monkeypatch.setattr(updates,'version',lambda:{'version':'0.1.1','windows_signer_thumbprint':''})
+    launched=[]
+    def launch(*args,**kwargs):
+        snapshots=list((root/'backups-before-updates').glob('server-*.zip'))
+        assert len(snapshots)==1
+        assert set(verify_snapshot(snapshots[0])['files'])=={
+            'companion.sqlite3','token.txt','packs/eren_anki/1.0.0/private.png'}
+        with zipfile.ZipFile(snapshots[0]) as archive:
+            assert archive.read('token.txt')==token
+            assert archive.read('packs/eren_anki/1.0.0/private.png')==private.read_bytes()
+        launched.append(args)
+    monkeypatch.setattr(updates.subprocess,'Popen',launch)
+    updates.install(package,release)
+    assert len(launched)==1
+    assert (data/'token.txt').read_bytes()==token
+    assert private.read_bytes()==b'original owner artwork'
+
+
+def test_pre_update_backup_failure_stops_installer_without_data_loss(tmp_path,monkeypatch):
+    from companion import updates
+    root=tmp_path/'AnkiCompanion'/'server';root.mkdir(parents=True)
+    (root/'companion.sqlite3').write_bytes(b'existing history')
+    with pytest.raises(ValueError,match='no pairing token'):
+        updates.preserve_windows_state_before_update(tmp_path)
+    assert (root/'companion.sqlite3').read_bytes()==b'existing history'

@@ -6,4 +6,4 @@ RUN pip install --no-cache-dir -r requirements-server.txt
 COPY . .
 ENV ANKI_COMPANION_DATA=/data
 EXPOSE 8765
-CMD ["python", "-m", "server.main", "--host", "0.0.0.0", "--data", "/data"]
+CMD ["python", "-m", "server.launch", "--host", "0.0.0.0", "--data", "/data"]

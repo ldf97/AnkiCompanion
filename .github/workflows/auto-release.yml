@@ -3,11 +3,7 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-  # After the one-time Android signing secret is added, the next scheduled
-  # run automatically publishes its first signed APK; no terminal or extra
-  # manual release command is needed.
-  schedule:
-    - cron: '17 */6 * * *'
+  # Candidate builds are automatic; stable publication needs explicit approval.
 permissions:
   contents: read
 concurrency:
@@ -39,10 +35,6 @@ jobs:
               echo 'needed=true' >> "$GITHUB_OUTPUT"
             fi
           fi
-  verify:
-    needs: [decide]
-    if: needs.decide.outputs.needed == 'true'
-    uses: ./.github/workflows/ci.yml
   version:
     needs: [decide]
     if: needs.decide.outputs.needed == 'true'
@@ -67,7 +59,7 @@ jobs:
           echo "version=1.0.$((${BASH_REMATCH[1]}+1))" >> "$GITHUB_OUTPUT"
           echo "build=$((1000000+GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
   release:
-    needs: [decide, verify, version]
+    needs: [decide, version]
     if: needs.decide.outputs.needed == 'true'
     uses: ./.github/workflows/release-candidate.yml
     permissions:
@@ -75,5 +67,5 @@ jobs:
     with:
       version: ${{ needs.version.outputs.version }}
       build: ${{ fromJSON(needs.version.outputs.build) }}
-      publish: true
+      publish: false
     secrets: inherit

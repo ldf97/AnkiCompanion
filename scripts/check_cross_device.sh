@@ -31,7 +31,15 @@ for _ in range(180):
  time.sleep(1)
 else:raise RuntimeError('AnkiDroid initial collection download failed')
 PY
+# Capture a compact native Android crash trace if instrumentation fails.
+adb logcat -c || true
 adb shell am instrument -w -e crossDevice true -e class org.ankicompanion.app.CrossDeviceTest org.ankicompanion.app.test/androidx.test.runner.AndroidJUnitRunner | tee test-results/cross-device/companion-instrumentation.txt
+if grep -q "Process crashed" test-results/cross-device/companion-instrumentation.txt; then
+  adb logcat -d -v threadtime >test-results/cross-device/crash-logcat.txt || true
+  grep -A 36 -B 5 -E 'FATAL EXCEPTION|FATAL SIGNAL|org.ankicompanion.app|ForegroundServiceStartNotAllowed' test-results/cross-device/crash-logcat.txt | tail -250 || true
+  echo 'Cross-device Android instrumentation crashed; see crash-logcat.txt artifact' >&2
+  exit 1
+fi
 wait "$phone_pid"
 adb pull /sdcard/Android/data/org.ankicompanion.app/files/evidence test-results/cross-device/
 adb logcat -d >test-results/cross-device/logcat.txt
