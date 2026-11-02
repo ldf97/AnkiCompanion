@@ -43,4 +43,4 @@ function IsAutoUpdate: Boolean;
 begin
   Result := Pos('/AUTOUPDATE', Uppercase(GetCmdTail)) > 0;
 end;
-; User data lives outside the installation folder and survives updates/uninstall.
+// User data lives outside the installation folder and survives updates/uninstall.
