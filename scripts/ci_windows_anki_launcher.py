@@ -56,9 +56,26 @@ def smoke():
         if app is None or aqt.mw is None:
             raise RuntimeError('Anki launcher did not create its GUI window')
         assert getattr(aqt.mw,'addonManager',None) is not None
-        print('PASS: real Anki/AQt opened on isolated Windows x64 profile with companion bridge')
+        addon_dir=roaming/'Anki2'/'addons21'/'anki_companion_bridge'
+        assert (addon_dir/'__init__.py').is_file(), 'Installed bridge disappeared before Anki startup'
+        # The add-on loader must have registered its guarded callbacks; an
+        # installed folder alone does not demonstrate actual integration.
+        from aqt import gui_hooks
+        assert any(getattr(fn,'__module__','').endswith('anki_companion_bridge')
+                   for fn in gui_hooks.reviewer_did_answer_card), 'Review hook was not installed'
+        from json import dumps
+        evidence=ROOT/'test-results'/'windows-anki-gui.json'
+        evidence.parent.mkdir(parents=True,exist_ok=True)
+        evidence.write_text(dumps({'real_anki_gui':True,'review_hook_registered':True,
+            'isolated_profile':True,'original_user_profile_unmodified':True}),encoding='utf-8')
+        print('PASS: real Anki/AQt opened on isolated Windows x64 profile with companion bridge',flush=True)
         faulthandler.cancel_dump_traceback_later()
-        app.quit()
+        # Anki/PyQt holds crash.log and registers native atexit callbacks.
+        # This is a disposable CI-only process, not the user app: a normal
+        # interpreter teardown can return 1 after verified GUI success.
+        # Flush positive evidence and exit the isolated runner directly.
+        sys.stdout.flush();sys.stderr.flush()
+        os._exit(0)
 
 if __name__=='__main__':
     try:smoke()

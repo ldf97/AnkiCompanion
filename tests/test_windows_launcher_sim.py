@@ -100,3 +100,12 @@ def test_real_anki_ci_smoke_does_not_fail_after_gui_success_due_to_locked_temp_l
     source=(Path(__file__).resolve().parents[1]/'scripts/ci_windows_anki_launcher.py').read_text()
     assert "ignore_cleanup_errors=True" in source
     assert "PASS: real Anki/AQt opened" in source
+
+
+def test_real_anki_gui_smoke_verifies_review_hook_and_exits_before_qt_atexit():
+    source=(ROOT/'scripts/ci_windows_anki_launcher.py').read_text()
+    assert 'gui_hooks.reviewer_did_answer_card' in source
+    assert "windows-anki-gui.json" in source
+    assert 'os._exit(0)' in source
+    assert source.index("assert (addon_dir/'__init__.py').is_file()") < source.index('os._exit(0)')
+    assert source.index('review_hook_registered') < source.index('os._exit(0)')
