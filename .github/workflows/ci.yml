@@ -81,7 +81,7 @@ jobs:
           # Anki uses PyQt6/QtWebEngine. The companion UI uses PySide6.
           # Their packaged Qt DLLs must never be mixed in one Python process.
           python -m venv "$env:RUNNER_TEMP/aqt-isolated"
-          & "$env:RUNNER_TEMP/aqt-isolated/Scripts/python.exe" -m pip install --disable-pip-version-check aqt==26.9.3
+          & "$env:RUNNER_TEMP/aqt-isolated/Scripts/python.exe" -m pip install --disable-pip-version-check aqt==26.9.3 PyQt6==6.11.0 PyQt6-Qt6==6.11.2 PyQt6-WebEngine==6.11.0 PyQt6-WebEngine-Qt6==6.11.2
           & "$env:RUNNER_TEMP/aqt-isolated/Scripts/python.exe" scripts/ci_windows_anki_launcher.py
           if ($LASTEXITCODE -ne 0) { throw 'Real Anki launcher smoke failed' }
       - shell: pwsh
