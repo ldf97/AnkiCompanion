@@ -155,3 +155,21 @@ def test_gui_export_creates_verified_original_server_snapshot_without_mutation(t
     assert (source/"token.txt").read_bytes()==original_token
     with pytest.raises(FileExistsError):
         setup.export_hosted_state(dest)
+
+
+def test_gui_setup_repair_is_repeatable_and_never_requires_shell_commands():
+    from pathlib import Path
+    text=(Path(__file__).resolve().parents[1]/'desktop/app.py').read_text()
+    assert "Repair setup · Anki bridge / server" in text
+    assert 'self.repair_button.clicked.connect(self.repair_setup)' in text
+    assert "self.bridge_timer.start(10*60*1000)" in text
+    assert "self.bridge_timer.timeout.connect(self.ensure_bridge_periodic)" in text
+    assert 'self._bridge_repair_running=True' in text
+    assert 'first_run.has_remote_connection(self.config)' in text
+    assert 'self.launch(first_run.ensure_anki_bridge,completed)' in text
+    assert 'self.bridge_timer.stop()' in text
+    # The original owner profile and Anki database are never altered by
+    # installing the bridge; existing configs and collections stay untouched.
+    bridge=(Path(__file__).resolve().parents[1]/'desktop/bootstrap.py').read_text()
+    assert 'if all((target/n).is_file() and (target/n).read_bytes()==b' in bridge
+    assert 'stage.replace(dest)' in bridge

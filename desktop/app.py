@@ -136,6 +136,11 @@ class Window(QMainWindow):
         for b in (goals,skins,compact):footer.addWidget(b)
         box.addLayout(footer);note=QLabel('A lesson maintains your streak. Anki decides which cards are available.');note.setWordWrap(True);note.setObjectName('muted');box.addWidget(note)
         self.update_button=QPushButton('Updates · '+updates.version()['version']);self.update_button.clicked.connect(lambda:self.check_updates(True));box.addWidget(self.update_button)
+        self.repair_button=QPushButton('Repair setup · Anki bridge / server');self.repair_button.clicked.connect(self.repair_setup);box.addWidget(self.repair_button)
+        # Anki can be installed AFTER the companion. Retry safe add-on setup
+        # periodically without asking the owner to run commands or copy files.
+        self.bridge_timer=QTimer(self);self.bridge_timer.timeout.connect(self.ensure_bridge_periodic)
+        if autostart and sys.platform=='win32':self.bridge_timer.start(10*60*1000)
         self.update_timer=QTimer(self);self.update_timer.timeout.connect(lambda:self.check_updates(False))
         if autostart:self.update_timer.start(15*60*1000);QTimer.singleShot(3000,lambda:self.check_updates(False))
         self.timer=QTimer(self);self.timer.timeout.connect(self.refresh)
@@ -145,6 +150,23 @@ class Window(QMainWindow):
                 QTimer.singleShot(0,self.bootstrap_local)
             else:
                 QTimer.singleShot(0,self.refresh)
+
+    def repair_setup(self):
+        """One-click repair; never resets data or changes saved hosted pairing."""
+        if sys.platform!='win32':
+            self.status.setText('Setup repair is managed inside the Windows installer or Android app')
+        elif first_run.has_remote_connection(self.config):
+            self.ensure_bridge_periodic(show_result=True)
+        else:
+            self.bootstrap_local()
+
+    def ensure_bridge_periodic(self,show_result=False):
+        if sys.platform!='win32' or getattr(self,'_bridge_repair_running',False):return
+        self._bridge_repair_running=True
+        def completed(message):
+            if show_result:self.status.setText(message+' · hosted connection preserved')
+        job=self.launch(first_run.ensure_anki_bridge,completed)
+        job.finished.connect(lambda:setattr(self,'_bridge_repair_running',False))
 
     def bootstrap_local(self):
         """Self-repair without overwriting a saved hosted connection."""
@@ -368,7 +390,7 @@ class Window(QMainWindow):
         event.ignore()
         self.show_dock()
     def quit_app(self):
-        self.quitting=True;self.timer.stop();self.update_timer.stop();self.hide();self.dock.hide();self.tray.hide()
+        self.quitting=True;self.timer.stop();self.update_timer.stop();self.bridge_timer.stop();self.hide();self.dock.hide();self.tray.hide()
         # Let network workers finish before destroying their QThread objects.
         if self.jobs:QTimer.singleShot(100,self.quit_app)
         else:QApplication.instance().quit()

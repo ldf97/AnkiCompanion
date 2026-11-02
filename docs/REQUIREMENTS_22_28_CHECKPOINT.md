@@ -18,7 +18,7 @@ Do not merge or publish until full CI, signing, real-device upgrade and Anki acc
 - [x] **24**: The Windows in-app updater now creates and verifies a transactional SQLite/token/private-skin backup *before* launching an in-place installer, and rejects unsafe upgrades without asking for a restore; same-signer Android upgrade retention was already tested in emulator.
 - [x] **25**: Direct and automatic candidate workflows now require the entire reusable CI suite, fail when persistent signing secrets are absent, demand both production-signed Android packages, and only publish after an explicit approved release dispatch.
 - [x] **26**: Android resumes the already verified APK after the OS install-source permission screen without downloading again, preserving native installer confirmation; Windows already downloads, SHA-verifies and launches the release from the in-app Update button.
-- [ ] **27**: Not started.
+- [x] **27**: Windows GUI now offers one-click Repair setup and automatically retries installing the safely packaged Anki bridge every 10 minutes, retaining hosted pairing and avoiding terminal instructions; Android handles system permissions in its own interface.
 - [ ] **28**: Not started.
 
 ## External acceptance limitations
