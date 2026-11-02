@@ -37,6 +37,8 @@ jobs:
       - run: pip install -r requirements-desktop.txt -r requirements-test.txt
       - run: python scripts/make_public_fixture.py
       - run: python -m pytest -v --junitxml=test-results/ci-python.xml tests
+      - name: Simulate PC1 → offline gym phone → PC2, undo, packet loss and restart
+        run: python -m simulations.gym.lab --output test-results/group1-gym
       - run: python scripts/check_tray.py
       - uses: actions/upload-artifact@v4
         if: always()
