@@ -88,3 +88,32 @@ def test_deployment_backs_up_before_replacing_running_container():
     compose=(ROOT/'deployment/compose.yaml').read_text()
     assert "ankicompanion_backups:/backups:rw" in compose
     assert "name: ankicompanion_backups" in compose
+
+def test_container_startup_captures_existing_state_before_any_schema_migration(tmp_path,monkeypatch):
+    from server.main import create_app
+    from server.launch import prepare_hosted_start
+    from server.backup import verify_snapshot
+    data=tmp_path/"data";backups=tmp_path/"backups"
+    create_app(data)
+    monkeypatch.setenv("ANKI_COMPANION_DATA",str(data))
+    monkeypatch.setenv("ANKI_COMPANION_BACKUPS",str(backups))
+    assert prepare_hosted_start() is not None
+    files=list(backups.glob("server-*.zip"))
+    assert len(files)>=1 and "companion.sqlite3" in verify_snapshot(files[0])["files"]
+    monkeypatch.setenv("ANKI_COMPANION_BACKUPS",str(tmp_path/"missing"))
+    import pytest
+    with pytest.raises(RuntimeError,match="backups volume"):
+        prepare_hosted_start()
+
+
+def test_railway_definition_has_two_persistent_volumes_and_one_replica():
+    source=(ROOT/".railway/railway.ts").read_text()
+    assert 'volume("ankicompanion-data"' in source
+    assert 'volume("ankicompanion-backups"' in source
+    assert '"/data": data' in source and '"/backups": backups' in source
+    assert 'replicas: 1' in source
+    assert 'source: github("ldf97/AnkiCompanion"' in source
+    assert 'RAILWAY_DOCKERFILE_PATH: "server/Dockerfile"' in source
+    assert "server.launch" in source
+    docker=(ROOT/"server/Dockerfile").read_text()
+    assert 'server.launch' in docker

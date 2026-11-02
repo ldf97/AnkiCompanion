@@ -157,7 +157,7 @@ def create_app(data_dir=None, token=None, clock=None):
 def main():
     import argparse,uvicorn
     parser=argparse.ArgumentParser(description='Personal Anki Companion server')
-    parser.add_argument('--host',default='127.0.0.1');parser.add_argument('--port',type=int,default=8765)
+    parser.add_argument('--host',default='127.0.0.1');parser.add_argument('--port',type=int,default=int(os.environ.get('PORT','8765')))
     parser.add_argument('--data',default=str(DEFAULT_DATA));args=parser.parse_args()
     app=create_app(args.data)
     print('Pairing token is stored in',Path(args.data).resolve()/'token.txt')
