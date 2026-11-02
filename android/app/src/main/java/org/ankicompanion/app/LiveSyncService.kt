@@ -11,7 +11,7 @@ class LiveSyncService:Service() {
     private val tick=object:Runnable {override fun run(){
         if(!active)return
         Sync.executor.execute {
-            try {Sync.run(applicationContext)}finally{if(active)handler.postDelayed(this,5000)}
+            try {Sync.run(applicationContext)}finally{if(active)handler.postDelayed(this,1000)}
         }
     }}
     override fun onBind(intent:Intent?)=null
