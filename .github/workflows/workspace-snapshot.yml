@@ -1,0 +1,30 @@
+name: Export resumable workspace checkpoint
+on:
+  push:
+    branches:
+      - feature/hosted-portable-signing-windows-sim-20261101
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  checkpoint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Create sanitized source checkpoint at exact commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p checkpoint
+          git archive --format=zip --output=checkpoint/AnkiCompanion-workspace.zip HEAD
+          printf 'Repository: https://github.com/%s\nBranch: %s\nCommit: %s\nPrivate Eren assets, installed profiles and keys are not in this public repository.\n' "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$GITHUB_SHA" >checkpoint/CHECKPOINT.txt
+          sha256sum checkpoint/AnkiCompanion-workspace.zip >checkpoint/SHA256SUMS.txt
+      - name: Upload restartable workspace
+        uses: actions/upload-artifact@v4
+        with:
+          name: resumable-workspace-source
+          retention-days: 30
+          if-no-files-found: error
+          path: checkpoint/
