@@ -7,7 +7,10 @@ import android.content.ContentValues
 import org.json.JSONObject
 import org.json.JSONArray
 
-class Outbox(context:Context):SQLiteOpenHelper(context,"reviews.db",null,1) {
+// Explicit Closeable fixes Android API 26-28: SQLiteOpenHelper gains
+// AutoCloseable only on newer platform API levels; Kotlin use() otherwise
+// casts this old-framework subclass to an unimplemented interface.
+class Outbox(context:Context):SQLiteOpenHelper(context,"reviews.db",null,1),java.io.Closeable {
     override fun onCreate(db:SQLiteDatabase) {
         db.execSQL("CREATE TABLE events(id TEXT PRIMARY KEY,payload TEXT NOT NULL,timestamp INTEGER NOT NULL,sent INTEGER NOT NULL DEFAULT 0,undone INTEGER NOT NULL DEFAULT 0,undo_sent INTEGER NOT NULL DEFAULT 0)")
     }
