@@ -36,3 +36,8 @@ def test_android_self_updater_exposes_portable_recovery_and_both_packages():
     assert 'AES/GCM/NoPadding' in portable
     assert 'PBKDF2WithHmacSHA256' in portable
     assert 'Restore recovery' in main and 'Export recovery' in main
+
+
+def test_android_pre_29_outbox_explicitly_implements_closeable():
+    source=(Path(__file__).resolve().parents[1]/"android/app/src/main/java/org/ankicompanion/app/Outbox.kt").read_text()
+    assert 'SQLiteOpenHelper(context,"reviews.db",null,1),java.io.Closeable' in source
