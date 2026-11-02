@@ -29,5 +29,18 @@ class LiveSyncService:Service() {
     }
     override fun onTimeout(startId:Int,fgsType:Int){stopSelf()}
     override fun onDestroy(){active=false;handler.removeCallbacksAndMessages(null);super.onDestroy()}
-    companion object {fun start(context:Context){context.startForegroundService(Intent(context,LiveSyncService::class.java))}}
+    companion object {
+        fun start(context:Context) {
+            try {
+                context.startForegroundService(Intent(context,LiveSyncService::class.java))
+            } catch (e:android.app.ForegroundServiceStartNotAllowedException) {
+                // Android 12+ may deny starts from the background. A denied
+                // service must never crash a widget, receiver or review UI.
+                Sync.schedule(context,true)
+            } catch (e:SecurityException) {
+                // Foreground-service quota, permission or OS policy denied.
+                Sync.schedule(context,true)
+            }
+        }
+    }
 }
