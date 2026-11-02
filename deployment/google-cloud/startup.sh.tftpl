@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec >>/var/log/ankicompanion-bootstrap.log 2>&1
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq ca-certificates curl gnupg git e2fsprogs
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+. /etc/os-release
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $VERSION_CODENAME stable" >/etc/apt/sources.list.d/docker.list
+apt-get update -qq
+apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl enable --now docker
+
+# Limit memory pressure on an e2-micro; never store private database on boot.
+if [ ! -e /var/swap.ankicompanion ]; then
+  fallocate -l 1G /var/swap.ankicompanion
+  chmod 600 /var/swap.ankicompanion
+  mkswap /var/swap.ankicompanion
+fi
+swapon /var/swap.ankicompanion || true
+
+mount_existing_or_blank_disk() {
+  local name="$1" mountpoint="$2" disk="/dev/disk/by-id/google-$1"
+  for i in $(seq 1 30); do [ -b "$disk" ] && break; sleep 2; done
+  [ -b "$disk" ] || { echo "Missing persistent disk $disk"; exit 1; }
+  mkdir -p "$mountpoint"
+  if ! blkid "$disk" >/dev/null 2>&1; then
+    mkfs.ext4 -F "$disk" # only genuinely unformatted disks
+  fi
+  local uuid
+  uuid=$(blkid -s UUID -o value "$disk")
+  [ -n "$uuid" ] || exit 1
+  grep -q "UUID=$uuid " /etc/fstab || printf 'UUID=%s %s ext4 defaults,nofail 0 2\n' "$uuid" "$mountpoint" >>/etc/fstab
+  mountpoint -q "$mountpoint" || mount "$mountpoint"
+  mountpoint -q "$mountpoint" || exit 1
+}
+mount_existing_or_blank_disk ankicompanion-data /srv/ankicompanion/data
+mount_existing_or_blank_disk ankicompanion-backups /srv/ankicompanion/backups
+bind_volume() {
+  local name="$1" mountpoint="$2"
+  if docker volume inspect "$name" >/dev/null 2>&1; then
+    local old
+    old=$(docker volume inspect --format '{{ index .Options "device" }}' "$name")
+    [ "$old" = "$mountpoint" ] || { echo "Refusing wrong volume $name: $old"; exit 1; }
+  else
+    docker volume create --driver local --opt type=none --opt o=bind --opt device="$mountpoint" "$name"
+  fi
+}
+bind_volume ankicompanion_data /srv/ankicompanion/data
+bind_volume ankicompanion_backups /srv/ankicompanion/backups
+
+if [ "${require_migration}" = "true" ] && [ ! -s /srv/ankicompanion/data/companion.sqlite3 ]; then
+  echo "MIGRATION_REQUIRED: original Windows server SQLite, token.txt and packs must be copied once before starting."
+  exit 0
+fi
+if [ ! -d /opt/ankicompanion/.git ]; then
+  git clone --no-checkout https://github.com/ldf97/AnkiCompanion.git /opt/ankicompanion
+fi
+cd /opt/ankicompanion
+git fetch --depth 1 origin "${source_ref}"
+git checkout --detach --force FETCH_HEAD
+test "$(git rev-parse HEAD)" = "${source_ref}"
+cat >deployment/.env <<'CONF'
+COMPANION_DOMAIN=${domain}
+ACME_EMAIL=${email}
+ANKI_COMPANION_REQUIRE_MIGRATION=0
+CONF
+chmod 600 deployment/.env
+docker compose --env-file deployment/.env -f deployment/compose.yaml up -d --build --wait --remove-orphans
+echo "HTTPS server configured under ${domain}"
