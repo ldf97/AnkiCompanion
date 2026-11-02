@@ -19,9 +19,9 @@ def test_20_desktop_10_phone_20_desktop_with_retries_undo_and_rollover(tmp_path)
     send(cards[:30],'desktop');send(cards[:30][::-1],'phone');check(30,60,20,False)
     first=cards[0];key=f"primary:{first['revlog_id']}:{first['card_id']}"
     assert c.post('/v1/events/retract',json={'ids':[key]}).status_code==200
-    check(29,58,21,False)
-    send(cards[30:50][::-1],'desktop');check(49,98,1,False)
-    send([cards[50]],'phone');check(50,100,0,True)
+    check(30,60,20,False) # undo changes scheduling, not daily accountability
+    send(cards[30:50][::-1],'desktop');check(50,100,0,True)
+    send([cards[50]],'phone');check(51,100,0,True)
     clock[0]+=86400000
     check(0,0,50,False)
     assert c.get('/v1/state').json()['streak']==1

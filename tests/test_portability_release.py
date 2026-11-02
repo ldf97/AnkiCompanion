@@ -40,7 +40,8 @@ def test_android_self_updater_exposes_portable_recovery_and_both_packages():
 
 def test_android_pre_29_outbox_explicitly_implements_closeable():
     source=(Path(__file__).resolve().parents[1]/"android/app/src/main/java/org/ankicompanion/app/Outbox.kt").read_text()
-    assert 'SQLiteOpenHelper(context,"reviews.db",null,1),java.io.Closeable' in source
+    assert 'SQLiteOpenHelper(context,databaseName,null,1),java.io.Closeable' in source
+    assert 'databaseName:String="reviews.db"' in source
 
 def test_normal_android_update_uses_atomic_file_and_committed_preferences():
     # Source-level gate for actual Android framework-backed state preservation.

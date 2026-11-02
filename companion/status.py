@@ -20,4 +20,7 @@ def device_status(device):
         native=f'Anki sync confirmed {applied}/{latest}'
     else:
         native='Anki sync not yet verified'
+    reported=str(device.get('sync_status') or '')[:160]
+    if reported.startswith(('Initial/full sync','Native Anki sync failed','Offline or sync failed')):
+        native += '; ' + reported
     return f'{label}: {live}; {native}'

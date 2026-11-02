@@ -16,6 +16,7 @@ class Bridge:
         self.config=mw.addonManager.getConfig(NAME) or {}
         self.discover_local_token()
         self.applied_revision=int(self.config.get('applied_revision',0))
+        self.native_sync_error=str(self.config.get('native_sync_error',''))
         self.pending_ticket=self.config.get('native_upload_ticket','')
         self.confirmed_ticket=self.config.get('native_confirmed_ticket','')
         if not self.config.get('device_id'):
@@ -23,6 +24,8 @@ class Bridge:
             mw.addonManager.writeConfig(NAME,self.config)
         self.file=Path(mw.pm.profileFolder())/'anki-companion-outbox.sqlite3'
         self.lock=threading.RLock();self.stopped=False;self.busy=False;self.syncing=False
+        self.next_native_attempt_at=0;self.sync_attempt_failures=0
+        self.undo_requested=False
         self.collection_synced_ms=0;self.last_sync=0;self.last_scan=0;
         self.answers=ReviewEpoch();self.stop_event=threading.Event();self.settings={};self.backfill_active=True;self.backfill_pending=False;self.high_water=int((time.time()-370*86400)*1000)
         with self.db() as db:
@@ -77,9 +80,17 @@ class Bridge:
             self.backfill_active=True;self.backfill_pending=False
         with self.lock,self.db() as db:
             before=self.high_water
-            self.high_water=reconcile(mw.col.db,db,collection,self.high_water,int((time.time()-3600)*1000))
+            self.high_water=reconcile(mw.col.db,db,collection,self.high_water,int((time.time()-3600)*1000),
+                allow_retractions=not self.syncing and (self.collection_synced_ms>0 or self.undo_requested))
             if self.high_water==before:self.backfill_active=False
     def collection_synced(self):
+        # Native Anki completed a user-initiated resolution; release a previous
+        # full-sync conflict backoff, but still require a new verified receipt.
+        self.next_native_attempt_at=0
+        self.sync_attempt_failures=0
+        self.native_sync_error=''
+        self.config['native_sync_error']=''
+        mw.addonManager.writeConfig(NAME,self.config)
         # A native sync every ten seconds must not continually reset a large
         # paginated history before the scan has reached its newer rows.
         self.backfill_pending=True
@@ -100,8 +111,18 @@ class Bridge:
         try:
             # Never scan the full history on every five-second GUI timer.
             # A review wakes it immediately; idle history reads are throttled.
-            if self.answers.needs_scan or time.time()-self.last_scan>=20:
+            if self.answers.needs_scan or self.undo_requested or time.time()-self.last_scan>=20:
+                with self.lock,self.db() as db:
+                    prior_undos=db.execute('SELECT COUNT(*) FROM undo WHERE sent=0').fetchone()[0]
                 self.scan();self.last_scan=time.time()
+                with self.lock,self.db() as db:
+                    latest_undos=db.execute('SELECT COUNT(*) FROM undo WHERE sent=0').fetchone()[0]
+                if self.undo_requested and latest_undos>prior_undos:
+                    # The undo really removed at least one review-log row.
+                    # Dispatch a native synchronization generation, but do NOT
+                    # retract the review from the streak-accountability ledger.
+                    self.answers.answer()
+                self.undo_requested=False
                 self.answers.scan_complete()
             decks=self.decks()
         except Exception as exc:print('Anki Companion scan:',exc);return
@@ -134,7 +155,7 @@ class Bridge:
                     collection_id=self.config.get('collection_id','primary'),
                     applied_revision=self.applied_revision,
                     native_upload_ticket=self.confirmed_ticket,
-                    sync_status='native Anki sync' if self.collection_synced_ms else 'not yet synced',
+                    sync_status=self.native_sync_error or ('native Anki sync' if self.collection_synced_ms else 'not yet synced'),
                     collection_synced_ms=self.collection_synced_ms))
                 query='?device_id='+quote(self.config['device_id'],safe='')+'&collection_id='+quote(self.config.get('collection_id','primary'),safe='')
                 state=api.request('/v1/state'+query)
@@ -158,8 +179,17 @@ class Bridge:
         if self.stopped or not mw.col:return
         if settings:self.settings=settings
         if error:print('Anki Companion offline:',error)
+        # A study command cannot open a deck based on an old native collection.
+        # Complete the remote revision first; the unacknowledged command will be
+        # fetched again by tick() after that synchronization succeeds.
+        if native.get('pending') and self.config.get('auto_sync',True):
+            required=int(native.get('revision',0))
+            if mw.state in ('deckBrowser','overview'):
+                self.sync_then(lambda:self.mark_applied(required))
+            # During a review session, don't interrupt an active card. Retain
+            # the server's pending receipt for the next safe state transition.
+            return
         for command in commands:
-            # Never interrupt an active answer or launch another profile's collection.
             if mw.state not in ('deckBrowser','overview'):continue
             with self.lock,self.db() as db:
                 seen=db.execute('SELECT 1 FROM commands WHERE id=?',(command['id'],)).fetchone()
@@ -168,23 +198,52 @@ class Bridge:
                 continue
             if self.syncing:break
             def applied(command=command):
-                if command['action']=='study':self.open_deck(command['deck_id'])
+                if command['action']=='study':
+                    self.verify_study_handoff(command)
+                    return
                 with self.lock,self.db() as db:db.execute('INSERT OR IGNORE INTO commands VALUES (?)',(command['id'],))
                 threading.Thread(target=self.ack,args=(command['id'],),daemon=True).start()
             self.sync_then(applied)
-        # Versioned remote changes: one native sync then ACK. Offline clients
-        # keep a durable revision cursor and resume automatically on startup.
-        if native.get('pending') and self.config.get('auto_sync',True):
-            required=int(native.get('revision',0))
-            if mw.state in ('deckBrowser','overview'):
-                self.sync_then(lambda:self.mark_applied(required))
-            # Never reset the active review card out from under the user.
-            return
         if (not error and self.config.get('auto_sync',True) and
                 not self.answers.needs_scan and self.answers.uploaded>=self.answers.answered and
                 mw.state in ('deckBrowser','overview','review') and
                 time.time()-self.last_sync>(2 if self.answers.needs_sync else 10)):
             self.sync_then(lambda:None)
+
+    def verify_study_handoff(self,command):
+        """Never open a card until the just-synced native collection is current.
+
+        Network reads run on a worker. An unacknowledged server command survives
+        retries, sleep and process restart. A newer remote revision or offline
+        server defers study rather than presenting potentially stale cards.
+        """
+        if self.stopped or self.answers.needs_sync or self.answers.needs_scan:
+            self.tick()
+            return
+        self.busy=True
+        def check():
+            ready=False
+            try:
+                collection=self.config.get('collection_id','primary')
+                path='/v1/state?device_id='+quote(self.config['device_id'],safe='')+'&collection_id='+quote(collection,safe='')
+                state=self.client().request(path)
+                native=state['native_sync']
+                ready=(not native.get('pending') and not native.get('outgoing_ticket') and
+                       not self.native_sync_error and not self.answers.needs_sync)
+            except Exception as exc:
+                print('Anki Companion study handoff deferred:',exc)
+            def finish():
+                self.busy=False
+                if self.stopped or not mw.col:return
+                if ready and mw.state in ('deckBrowser','overview') and not self.answers.needs_sync:
+                    self.open_deck(command['deck_id'])
+                    with self.lock,self.db() as db:db.execute('INSERT OR IGNORE INTO commands VALUES (?)',(command['id'],))
+                    threading.Thread(target=self.ack,args=(command['id'],),daemon=True).start()
+                else:
+                    print('Anki Companion: study handoff deferred until scheduling is current')
+                self.tick()
+            if not self.stopped:mw.taskman.run_on_main(finish)
+        threading.Thread(target=check,daemon=True).start()
 
     def mark_applied(self,version):
         if version>self.applied_revision:
@@ -194,8 +253,15 @@ class Bridge:
     def ack(self,identity):
         try:self.client().request('/v1/commands/'+self.config['device_id']+'/'+identity+'/ack','POST',{})
         except Exception:pass
+    def defer_native_retry(self,manual=False):
+        # Avoid hitting AnkiWeb every two seconds when offline or when a full
+        # sync requires an explicit human direction choice.
+        self.sync_attempt_failures=min(10,self.sync_attempt_failures+1)
+        seconds=300 if manual else min(300,10 * (2 ** (self.sync_attempt_failures-1)))
+        self.next_native_attempt_at=time.monotonic()+seconds
+
     def sync_then(self,after):
-        if self.syncing:return
+        if self.syncing or time.monotonic()<self.next_native_attempt_at:return
         auth=mw.pm.sync_auth()
         if not self.config.get('auto_sync',True) or not auth:
             print('Anki Companion: configure native Anki sync before automatic handoff')
@@ -213,8 +279,18 @@ class Bridge:
                 if result.new_endpoint:mw.pm.set_current_sync_url(result.new_endpoint)
                 mw.pm.set_host_number(result.host_number)
                 if result.required!=result.NO_CHANGES:
-                    print('Anki Companion: complete initial/full sync in Anki before study handoff')
+                    self.defer_native_retry(manual=True)
+                    self.native_sync_error='Initial/full sync requires a direction choice in Anki; study handoff deferred'
+                    self.config['native_sync_error']=self.native_sync_error
+                    mw.addonManager.writeConfig(NAME,self.config)
+                    print('Anki Companion:',self.native_sync_error)
                     return
+                self.sync_attempt_failures=0
+                self.next_native_attempt_at=0
+                if self.native_sync_error:
+                    self.native_sync_error=''
+                    self.config['native_sync_error']=''
+                    mw.addonManager.writeConfig(NAME,self.config)
                 self.collection_synced_ms=int(time.time()*1000)
                 self.answers.sync_complete(started_epoch)
                 # Never confirm a ticket generated after this sync started.
@@ -228,7 +304,12 @@ class Bridge:
                 if mw.state in ('deckBrowser','overview'):
                     mw.reset()
                 after();self.tick()
-            except Exception as exc:print('Anki Companion native sync failed:',exc)
+            except Exception as exc:
+                self.defer_native_retry()
+                self.native_sync_error='Native Anki sync failed; retry or resolve in Anki'
+                self.config['native_sync_error']=self.native_sync_error
+                mw.addonManager.writeConfig(NAME,self.config)
+                print('Anki Companion native sync failed:',exc)
         # Anki owns the collection operation and scheduling merge; never copy its DB.
         try:
             # No blocking progress dialog while answering cards. Anki's own
@@ -236,7 +317,9 @@ class Bridge:
             mw.taskman.run_in_background(
                 lambda:mw.col.sync_collection(auth,mw.pm.media_syncing_enabled()),
                 finished,uses_collection=True)
-        except Exception as exc:self.syncing=False;print('Anki Companion sync:',exc)
+        except Exception as exc:
+            self.syncing=False;self.defer_native_retry()
+            print('Anki Companion sync:',exc)
     def open_deck(self,identity):
         if self.stopped or not mw.col or not identity:return
         # Recompute after collection sync rather than opening a now-cleared deck.
@@ -244,6 +327,12 @@ class Bridge:
         if not selected:return
         identity=selected['id']
         mw.col.decks.select(int(identity));mw.moveToState('review')
+    def undone(self,*args):
+        # Anki's state_did_undo hook is emitted after its local undo commit.
+        # Only a changed revlog creates a /retract; unrelated UI undos do not.
+        self.undo_requested=True
+        QTimer.singleShot(100,self.tick)
+
     def answered(self,*args):
         # The Anki review hook has committed an answer. Record the generation
         # NOW; a native sync in progress must not erase this pending work.
@@ -281,6 +370,11 @@ def answered(*args):
     if controller:
         try:controller.answered(*args)
         except Exception as exc:print('Anki Companion answer callback:',exc)
+def undone(*args):
+    if controller:
+        try:controller.undone(*args)
+        except Exception as exc:print('Anki Companion undo callback:',exc)
+
 def synced(*args):
     if controller:
         try:controller.collection_synced()

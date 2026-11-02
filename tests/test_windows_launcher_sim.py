@@ -52,7 +52,7 @@ def test_anki_profile_did_open_and_answer_hooks_survive_all_integration_exceptio
     calls=[]
     hooks=types.SimpleNamespace(**{k:[] for k in (
         'profile_did_open','profile_will_close','reviewer_did_answer_card',
-        'sync_did_finish')})
+        'state_did_undo','sync_did_finish')})
     fake_aqt=types.ModuleType('aqt')
     fake_aqt.gui_hooks=hooks
     monkeypatch.setitem(sys.modules,'aqt',fake_aqt)
@@ -64,12 +64,13 @@ def test_anki_profile_did_open_and_answer_hooks_survive_all_integration_exceptio
     # A failing optional bridge can never crash the actual native Anki launcher.
     failing=types.ModuleType('anki_companion_bridge.bridge')
     def failed(*args):raise RuntimeError('Native Anki sync unavailable')
-    failing.opened=failing.closed=failing.answered=failing.synced=failed
+    failing.opened=failing.closed=failing.answered=failing.undone=failing.synced=failed
     monkeypatch.setitem(sys.modules,'anki_companion_bridge.bridge',failing)
     spec.loader.exec_module(instance)
     assert all(len(getattr(hooks,k))==1 for k in vars(hooks))
     hooks.profile_did_open[0]()
     hooks.reviewer_did_answer_card[0](object(),object(),3)
+    hooks.state_did_undo[0](object())
     hooks.sync_did_finish[0]()
     hooks.profile_will_close[0]()
 

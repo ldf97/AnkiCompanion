@@ -36,6 +36,15 @@ def _answer(*args):
     except BaseException as error:
         print('AnkiCompanion answer hook disabled:', type(error).__name__)
 
+def _undo(*args):
+    # A native scheduling undo needs timely propagation. A non-review undo
+    # produces no retraction; never delete accountability for a real attempt.
+    try:
+        if _instance is not None:
+            _instance.undone(*args)
+    except BaseException as error:
+        print('AnkiCompanion undo hook disabled:', type(error).__name__)
+
 def _sync(*args):
     try:
         if _instance is not None:
@@ -49,6 +58,7 @@ try:
         ('profile_did_open', _start),
         ('profile_will_close', _stop),
         ('reviewer_did_answer_card', _answer),
+        ('state_did_undo', _undo),
         ('sync_did_finish', _sync),
     ):
         _target = getattr(gui_hooks, _hook, None)

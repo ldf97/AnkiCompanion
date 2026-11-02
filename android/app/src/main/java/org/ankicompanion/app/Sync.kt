@@ -1,6 +1,9 @@
 package org.ankicompanion.app
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import java.io.IOException
 import android.content.ComponentName
 import android.content.BroadcastReceiver
 import android.content.Intent
@@ -20,7 +23,8 @@ object Sync {
         val scheduler=context.getSystemService(JobScheduler::class.java)
         val builder=JobInfo.Builder(if(immediate)201 else 200,ComponentName(context,SyncJob::class.java))
             .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).setPersisted(true)
-        if(immediate)builder.setMinimumLatency(0) else builder.setPeriodic(15*60*1000L)
+        if(immediate)builder.setMinimumLatency(0).setBackoffCriteria(10_000L,JobInfo.BACKOFF_POLICY_EXPONENTIAL)
+        else builder.setPeriodic(15*60*1000L)
         scheduler.schedule(builder.build())
     }
     fun run(context:Context):JSONObject? {
@@ -78,16 +82,27 @@ object Sync {
                         AnkiBridge.synchronize(context)
                         val version=if(remotePending)sync!!.getLong("revision") else applied
                         reportNative(version,ticket)
+                        store.setSetting("native_retry_pending","false")
                         if(ticket.isNotEmpty())store.setSetting("native_upload_ticket","")
                         store.setSetting("native_applied_revision",version.toString())
                     } catch(e:Exception){
                         store.setSetting("bridge_status","Scheduling sync pending: "+(e.message ?: "Native sync unavailable"))
+                        val reason=e.message ?: ""
+                        store.setSetting("native_retry_pending",if(reason.startsWith("Initial/full") ||
+                            reason.startsWith("Sign in"))"false" else "true")
                     }
                 }
                 try {Updates.check(context,api)}catch(e:Exception){store.setSetting("update_error",e.message ?: "Update check failed")}
                 try {Updates.checkAnkiDroid(context)}catch(e:Exception){store.setSetting("ankidroid_update_error",e.message ?: "Update check failed")}
+                // The first state was fetched BEFORE native synchronization.
+                // Never cache that stale pending revision as the final result.
+                val finalState=if(ticket.isNotEmpty() || remotePending) {
+                    api.json("/v1/state?device_id="+java.net.URLEncoder.encode(store.deviceId,"UTF-8")
+                        +"&collection_id="+java.net.URLEncoder.encode(collectionId,"UTF-8"))
+                } else state
+                store.save("state.json",finalState)
                 CompanionWidget.refresh(context)
-                return outbox.overlay(state)
+                return outbox.overlay(finalState)
             } finally {outbox.close()}
         } catch(e:Exception) {
             store.setSetting("sync_error",e.message ?: "Offline")
@@ -95,11 +110,98 @@ object Sync {
             return store.load("state.json")?.let{Outbox(context).use {out->out.overlay(it)}}
         } finally {running.set(false)}
     }
+    /** A disconnected learner can always study the installed Anki collection.
+     * Keep pending answers/undo events durable, and retry on network return.
+     * This is local-first study, NOT a claim that another device is current.
+     */
+    private fun offlineStudy(context:Context,store:Storage):JSONObject {
+        val cached=store.load("state.json")?.optJSONObject("settings")
+            ?: error("Connect once to choose your deck before offline studying")
+        store.setSetting("study_handoff_mode","offline")
+        store.setSetting("bridge_status","Offline study: local Anki scheduling; synchronization queued")
+        schedule(context,true)
+        return cached
+    }
+
+    /** Device-handoff barrier: verify fresh scheduling when connected.
+     * When genuinely offline, permit local studying instead of blocking habit.
+     * Never pretend the local queue is synchronized with another device.
+     */
+    fun prepareStudy(context:Context):JSONObject {
+        val store=Storage(context)
+        val connectivity=context.getSystemService(ConnectivityManager::class.java)
+        val available=connectivity.activeNetwork?.let {network->
+            connectivity.getNetworkCapabilities(network)?.hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_INTERNET)==true
+        } ?: false
+        if(!available)return offlineStudy(context,store)
+        val config=store.connection() ?: return offlineStudy(context,store)
+        run(context)
+        if(store.getSetting("sync_error").isNotBlank())return offlineStudy(context,store)
+        val api=Api(config)
+        val collection=config.optString("collection_id","primary")
+        val device=java.net.URLEncoder.encode(store.deviceId,"UTF-8")
+        val collectionEncoded=java.net.URLEncoder.encode(collection,"UTF-8")
+        val url="/v1/state?device_id=$device&collection_id=$collectionEncoded"
+        // A long offline queue can exceed one upload request; drain it before
+        // permitting another device to create scheduling conflicts.
+        Outbox(context).use { out ->
+            repeat(10) {
+                if(!out.hasUnsent())return@repeat
+                out.send(api,store.deviceId,store)
+            }
+            require(!out.hasUnsent()){"Pending reviews are still uploading; retry study handoff"}
+        }
+        val before=try {api.json(url)}catch(e:IOException){return offlineStudy(context,store)}
+        AnkiBridge.configure(context,before.getJSONObject("settings"))
+        // Even with no companion revision pending, an external AnkiWeb update
+        // may exist. Native synchronization is mandatory for ONLINE handoff.
+        try{AnkiBridge.synchronize(context)}catch(e:IllegalStateException){
+            if(e.message?.startsWith("Offline")==true)return offlineStudy(context,store)
+            throw e // full-sync conflicts require Anki to choose a direction
+        }
+        val capability=AnkiBridge.capabilities(context)
+            ?: error("AnkiDroid Companion permission/sync unavailable")
+        require(capability.getString("sync_status")=="synced"){
+            "Native scheduling synchronization incomplete; study handoff deferred"
+        }
+        val sync=before.getJSONObject("native_sync")
+        val revision=sync.optLong("revision",0L)
+        val ticket=sync.optString("outgoing_ticket","").ifEmpty {store.getSetting("native_upload_ticket")}
+        api.json("/v1/snapshots","POST",JSONObject()
+            .put("device_id",store.deviceId).put("collection_id",collection)
+            .put("applied_revision",revision)
+            .put("native_generation",capability.getLong("generation"))
+            .put("native_upload_ticket",ticket).put("label","Android phone")
+            .put("decks",JSONArray(AnkiBridge.decks(context)))
+            .put("sync_status","synced")
+            .put("collection_synced_ms",capability.getLong("synced_ms")))
+        val fresh=api.json(url)
+        val newest=fresh.getJSONObject("native_sync")
+        require(!newest.optBoolean("pending") && newest.optString("outgoing_ticket","").isEmpty()){
+            "Another device changed the collection during handoff; synchronize again before studying"
+        }
+        store.setSetting("native_applied_revision",newest.optLong("applied_revision",revision).toString())
+        store.setSetting("native_upload_ticket","")
+        store.setSetting("native_retry_pending","false")
+        store.setSetting("study_handoff_mode","verified")
+        store.save("state.json",fresh)
+        CompanionWidget.refresh(context)
+        return fresh.getJSONObject("settings")
+    }
+
 }
 
 class SyncJob:JobService() {
     override fun onStartJob(params:JobParameters):Boolean {
-        Sync.executor.execute {try{Sync.run(applicationContext)}finally{jobFinished(params,false)}};return true
+        Sync.executor.execute {
+            try{Sync.run(applicationContext)}finally{
+                val store=Storage(applicationContext)
+                val retry=params.jobId!=200 && (store.getSetting("sync_error").isNotBlank() ||
+                    store.getSetting("native_retry_pending")=="true")
+                jobFinished(params,retry)
+            }
+        };return true
     }
     override fun onStopJob(params:JobParameters)=true
 }

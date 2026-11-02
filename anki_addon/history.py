@@ -2,7 +2,7 @@
 import json
 
 
-def reconcile(collection_db, outbox_db, collection_id, cursor, recent_floor):
+def reconcile(collection_db, outbox_db, collection_id, cursor, recent_floor, allow_retractions=True):
     rows = collection_db.all('SELECT id,cid,time,ease,ivl,lastIvl FROM revlog WHERE id>=? AND ease>0 ORDER BY id LIMIT 1000', cursor)
     recent = collection_db.all('SELECT id,cid,time,ease,ivl,lastIvl FROM revlog WHERE id>=? AND ease>0 ORDER BY id', recent_floor)
     for rid, cid, duration, rating, interval, last_interval in rows + recent:
@@ -26,6 +26,8 @@ def reconcile(collection_db, outbox_db, collection_id, cursor, recent_floor):
     known = [(i, json.loads(p)) for i,p in outbox_db.execute(
         'SELECT id,payload FROM outbox ORDER BY sent ASC, rowid DESC LIMIT 1200')]
     known = [(i,p) for i,p in known if p['collection_id'] == collection_id]
+    if not allow_retractions:
+        return rows[-1][0]+1 if rows else cursor
     for offset in range(0, len(known), 300):
         batch = known[offset:offset+300]
         marks = ','.join('?' for _ in batch)

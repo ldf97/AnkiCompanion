@@ -49,13 +49,20 @@ def test_undo_tombstone_prevents_late_resurrection(client):
     item=event();key=f"primary:{item['revlog_id']}:1"
     client.post('/v1/events/retract',json={'ids':[key]})
     client.post('/v1/events',json={'events':[item]})
-    assert client.get('/v1/state').json()['progress']['answers']==0
+    state=client.get('/v1/state').json()
+    assert state['progress']['answers']==1  # evidence of study is immutable
+    assert state['progress']['active_reviews']==0
+    audit=client.get('/v1/events/audit').json()['events']
+    assert len(audit)==1 and audit[0]['retracted'] is True
 
-def test_undo_recomputes_completion(client):
+def test_undo_keeps_streak_accountability(client):
     items=[event(i,card=i+1) for i in range(10)]
     client.post('/v1/events',json={'events':items})
     client.post('/v1/events/retract',json={'ids':[f"primary:{items[0]['revlog_id']}:1"]})
-    assert not client.get('/v1/state').json()['completed']
+    state=client.get('/v1/state').json()
+    assert state['completed'] and state['streak']==1
+    assert state['progress']['answers']==10
+    assert state['progress']['active_reviews']==9
 
 def test_late_offline_yesterday_extends_streak(client):
     items=[event(i,card=i+1) for i in range(10)]
