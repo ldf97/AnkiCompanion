@@ -111,6 +111,11 @@ class Outbox(context:Context):SQLiteOpenHelper(context,"reviews.db",null,1),java
         if(items.size<1000)store.setSetting("backfill_pending","false")
         if(items.isNotEmpty())store.setSetting("history_cursor",(items.last().getLong("revlog_id")+1).toString())
     }
+    fun hasUnsent():Boolean {
+        readableDatabase.rawQuery("SELECT 1 FROM events WHERE sent=0 OR (undone=1 AND undo_sent=0) LIMIT 1",null).use {
+            return it.moveToFirst()
+        }
+    }
     fun send(api:Api,deviceId:String,store:Storage) {
         val pending=mutableListOf<Pair<String,JSONObject>>()
         readableDatabase.rawQuery("SELECT id,payload FROM events WHERE sent=0 ORDER BY timestamp DESC LIMIT 1000",null).use {c->while(c.moveToNext())pending.add(c.getString(0) to JSONObject(c.getString(1)))}
@@ -136,7 +141,9 @@ class Outbox(context:Context):SQLiteOpenHelper(context,"reviews.db",null,1),java
         readableDatabase.rawQuery("SELECT id,payload,undone FROM events WHERE timestamp>=?",arrayOf((now-2*86400000L).toString())).use {c->while(c.moveToNext()) {
             val item=JSONObject(c.getString(1))
             if(Rules.day(item.getLong("revlog_id"),settings.getString("timezone"),settings.getInt("rollover_minute"))==day) {
-                if(c.getInt(2)==0)merged[c.getString(0)]=item.getLong("duration_ms") else merged.remove(c.getString(0))
+                // Undo changes native scheduling, not whether the user studied.
+                // Keep the original unique attempt in the daily streak ledger.
+                merged[c.getString(0)]=item.getLong("duration_ms")
             }
         }}
         val policy=if(same)state.getJSONObject("policy") else settings

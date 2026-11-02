@@ -321,7 +321,11 @@ class Store:
             settings = self._settings(db)
             today = study_day(now_ms, settings['timezone'], settings['rollover_minute'])
             policy, lineup = self._day(db, today, packs)
-            rows = db.execute('SELECT day,COUNT(*) AS answers,COALESCE(SUM(duration_ms),0) AS ms FROM events WHERE retracted=0 GROUP BY day').fetchall()
+            # Streak accountability measures the fact that an answer happened,
+            # even when its native scheduling effect was subsequently undone.
+            # A tombstone prevents resurrection of native state, not deletion
+            # of the original practice attempt. Identity dedup remains intact.
+            rows = db.execute('SELECT day,COUNT(*) AS answers,COALESCE(SUM(duration_ms),0) AS ms FROM events GROUP BY day').fetchall()
             totals = {r['day']: dict(answers=r['answers'], duration_ms=r['ms']) for r in rows}
             goals = {r['day']: json.loads(r['policy']) for r in db.execute('SELECT day,policy FROM days')}
             complete = {d for d,t in totals.items() if t['answers'] >= goals[d]['lesson_answers']
@@ -351,8 +355,12 @@ class Store:
                             completed=(date.fromisoformat(today)-timedelta(days=i)).isoformat() in complete)
                        for i in reversed(range(7))]
             today_events = [dict(id=r['id'], duration_ms=r['duration_ms']) for r in
-                db.execute('SELECT id,duration_ms FROM events WHERE day=? AND retracted=0 ORDER BY id', (today,))]
+                db.execute('SELECT id,duration_ms FROM events WHERE day=? ORDER BY id', (today,))]
             progress=lesson_progress(**totals.get(today,dict(answers=0,duration_ms=0)),policy=policy)
+            # Informational only: native-current reviews exclude retractions.
+            # Do not use this number to calculate daily goal completion.
+            progress['active_reviews']=db.execute(
+                'SELECT COUNT(*) FROM events WHERE day=? AND retracted=0', (today,)).fetchone()[0]
             state = dict(server_time_ms=now_ms, date=today, settings=settings, policy=policy,
                          lineup=lineup, seed=db.execute("SELECT value FROM meta WHERE key='seed'").fetchone()[0],
                          completed=done, streak=streak, progress=progress,

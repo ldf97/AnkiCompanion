@@ -194,10 +194,11 @@ class MainActivity:Activity() {
         val s=current.getJSONObject("settings")
         status.text="Checking Anki scheduling before opening your deck…"
         async({
-            AnkiBridge.configure(applicationContext,s)
-            AnkiBridge.synchronize(applicationContext)
-            Rules.next(AnkiBridge.decks(applicationContext),s.getString("parent_deck_id"),s.getString("clearance"))
+            val verified=Sync.prepareStudy(applicationContext)
+            Rules.next(AnkiBridge.decks(applicationContext),verified.getString("parent_deck_id"),verified.getString("clearance"))
         }){result->
+            if(storage.getSetting("study_handoff_mode")=="offline")
+                status.text="Studying offline · reviews and undos will sync on reconnect"
             val deck=result as? JSONObject
             if(deck==null)status.text="No eligible subdeck. Check your selected parent and Anki limits."
             else try{AnkiBridge.open(this,deck.getString("id"))}catch(e:Exception){status.text=e.message ?: "Could not open AnkiDroid"}
