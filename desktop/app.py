@@ -212,8 +212,19 @@ class Window(QMainWindow):
             self.panel.set_frame(frame,warning,warn);self.dock.panel.set_frame(frame,warning,warn);self.last_key=key
         age=max(0,int((time.time()*1000-value['server_time_ms'])/1000))
         status=('Connected · last server update '+str(age)+'s ago') if online else ('Offline · last server update '+str(age)+'s ago'+(' · new day is not yet synced' if old_day else ''))
-        waiting=[d['label'] for d in value['devices'] if d.get('native_sync',{}).get('pending')]
-        if waiting:status+=' · Native Anki catch-up pending: '+', '.join(waiting[:3])
+        # Report durable per-device native scheduling receipts; progress totals
+        # alone do NOT certify that due dates have converged in Anki.
+        for device in value['devices'][:5]:
+            native=device.get('native_sync',{})
+            revision=native.get('revision',0)
+            applied=native.get('applied_revision',0)
+            label=device.get('label','Device')
+            if native.get('pending'):
+                status+=f' · {label}: Anki sync pending {applied}/{revision}'
+            elif revision:
+                status+=f' · {label}: Anki sync confirmed {applied}/{revision}'
+            else:
+                status+=f' · {label}: Anki sync not yet verified'
         self.status.setText(status)
         p=value['progress'];g=value['policy'];ratio=min(p['answers']/g['lesson_answers'],p['duration_ms']/g['lesson_ms'] if g['lesson_ms'] else 1)
         self.progress.setValue(min(100,int(ratio*100)))

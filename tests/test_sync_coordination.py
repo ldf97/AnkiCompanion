@@ -106,3 +106,15 @@ def test_device_list_explicitly_exposes_stale_anime_review_collections(tmp_path)
     devices={d['device_id']:d for d in c.get('/v1/state').json()['devices']}
     assert devices['desktop']['native_sync']['pending']
     assert not devices['phone']['native_sync']['pending']
+
+def test_sync_status_ui_distinguishes_server_progress_from_native_receipt():
+    from pathlib import Path
+    root=Path(__file__).resolve().parents[1]
+    desktop=(root/"desktop/app.py").read_text()
+    android=(root/"android/app/src/main/java/org/ankicompanion/app/MainActivity.kt").read_text()
+    assert "Anki sync pending {applied}/{revision}" in desktop
+    assert "Anki sync confirmed {applied}/{revision}" in desktop
+    assert "Anki sync not yet verified" in desktop
+    assert "Anki sync pending $applied/$revision" in android
+    assert "Anki sync confirmed $applied/$revision" in android
+    assert "Scheduling sync pending:" in android

@@ -91,7 +91,17 @@ class MainActivity:Activity() {
         val localPending=value.optInt("locally_pending",0)
         if(localPending>0)status.append(" · $localPending answer(s) awaiting server acknowledgement")
         val native=value.optJSONObject("native_sync")
-        if(native?.optBoolean("pending")==true)status.append(" · Anki scheduling catch-up pending")
+        if(native!=null) {
+            val revision=native.optLong("revision",0)
+            val applied=native.optLong("applied_revision",0)
+            if(native.optBoolean("pending"))status.append(" · Anki sync pending $applied/$revision")
+            else if(revision>0L && applied>=revision)status.append(" · Anki sync confirmed $applied/$revision")
+            else status.append(" · Anki sync not yet verified")
+        }
+        // A connected server can acknowledge answers without proving native
+        // Anki scheduling convergence. Surface the bridge's true error too.
+        val bridgeIssue=storage.getSetting("bridge_status")
+        if(bridgeIssue.startsWith("Scheduling sync pending:"))status.append(" · $bridgeIssue")
         val p=value.getJSONObject("progress");val goal=if(value.optString("local_day",value.getString("date"))==value.getString("date"))value.getJSONObject("policy") else value.getJSONObject("settings")
         progress.text="${p.getInt("answers")}/${goal.getInt("lesson_answers")} · ${minOf(100,p.getInt("answers")*100/goal.getInt("lesson_answers"))}% · ${maxOf(0,goal.getInt("lesson_answers")-p.getInt("answers"))} remaining · ${p.getInt("duration_ms")/1000} / ${goal.getInt("lesson_ms")/1000} active seconds · ${value.getInt("streak")} day streak" + if(localPending>0)" (pending confirmation)" else ""
         bridge.text=storage.getSetting("bridge_status")
