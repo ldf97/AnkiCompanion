@@ -33,7 +33,7 @@ class LiveSyncService:Service() {
         fun start(context:Context) {
             try {
                 context.startForegroundService(Intent(context,LiveSyncService::class.java))
-            } catch (e:android.app.ForegroundServiceStartNotAllowedException) {
+            } catch (e:IllegalStateException) {
                 // Android 12+ may deny starts from the background. A denied
                 // service must never crash a widget, receiver or review UI.
                 Sync.schedule(context,true)
