@@ -5,6 +5,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -19,6 +20,7 @@ class UpgradeContinuityTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test fun seedOriginalData() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("upgrade_phase")=="seed")
         val store=Storage(context)
         store.saveConnection(JSONObject()
             .put("url","https://example.org")
@@ -44,6 +46,7 @@ class UpgradeContinuityTest {
     }
 
     @Test fun verifyDataAfterInPlaceUpgrade() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("upgrade_phase")=="verify")
         val store=Storage(context)
         assertEquals("1790000000000",store.getSetting("history_cursor"))
         assertEquals("137",store.getSetting("native_applied_revision"))

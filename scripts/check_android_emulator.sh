@@ -11,7 +11,7 @@ adb pull /sdcard/Android/data/org.ankicompanion.app/files/evidence app/build/emu
 # Same-signer in-place Android upgrade acceptance, not reinstall/restore.
 # Use only API35 to keep the 4-emulator CI matrix affordable.
 if [[ "${1:-}" == "35" ]]; then
-  adb shell am instrument -w -e class \
+  adb shell am instrument -w -e upgrade_phase seed -e class \
     org.ankicompanion.app.UpgradeContinuityTest#seedOriginalData \
     org.ankicompanion.app.test/androidx.test.runner.AndroidJUnitRunner \
     | tee app/build/emulator-evidence/update-seed.txt
@@ -21,7 +21,7 @@ if [[ "${1:-}" == "35" ]]; then
   adb install -r app/build/outputs/apk/debug/app-debug.apk \
     | tee app/build/emulator-evidence/inplace-install.txt
   grep -q 'Success' app/build/emulator-evidence/inplace-install.txt
-  adb shell am instrument -w -e class \
+  adb shell am instrument -w -e upgrade_phase verify -e class \
     org.ankicompanion.app.UpgradeContinuityTest#verifyDataAfterInPlaceUpgrade \
     org.ankicompanion.app.test/androidx.test.runner.AndroidJUnitRunner \
     | tee app/build/emulator-evidence/update-verify.txt
