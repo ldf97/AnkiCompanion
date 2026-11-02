@@ -269,6 +269,11 @@ class Store:
                 collection=device.get('collection_id','primary')
                 latest=versions.get(collection,0)
                 applied=receipts.get((collection,device['device_id']),0)
+                # A valid scheduling receipt is not proof that the device is
+                # currently online; report observed liveness separately.
+                age=max(0,int((now_ms-device['updated_ms'])/1000))
+                device['age_seconds']=age
+                device['online']=age<=120
                 device['native_sync']=dict(revision=latest,applied_revision=applied,
                                             pending=latest>applied)
             history = [dict(date=(date.fromisoformat(today)-timedelta(days=i)).isoformat(),

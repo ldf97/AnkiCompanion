@@ -10,6 +10,7 @@ from companion.packs import Packs
 from companion.rules import scene, daily_lineup, study_day, lesson_progress
 from app.widget_engine import WidgetEngine
 from companion import updates
+from companion.status import device_status
 from desktop import bootstrap as first_run
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -237,16 +238,9 @@ class Window(QMainWindow):
         # Report durable per-device native scheduling receipts; progress totals
         # alone do NOT certify that due dates have converged in Anki.
         for device in value['devices'][:5]:
-            native=device.get('native_sync',{})
-            revision=native.get('revision',0)
-            applied=native.get('applied_revision',0)
-            label=device.get('label','Device')
-            if native.get('pending'):
-                status+=f' · {label}: Anki sync pending {applied}/{revision}'
-            elif revision:
-                status+=f' · {label}: Anki sync confirmed {applied}/{revision}'
-            else:
-                status+=f' · {label}: Anki sync not yet verified'
+            status+=' · '+device_status(device)
+        if not online:
+            status+=' · connection retry pending (using cached progress)'
         if value.get('shared_revision'):
             status+=' · confirmed state '+value['shared_revision'][:8]
         self.status.setText(status)

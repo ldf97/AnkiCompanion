@@ -102,7 +102,7 @@ class MainActivity:Activity() {
         val first=state==null;state=value
         val error=storage.getSetting("sync_error")
         status.text=if(error.isEmpty())"Connected · "+value.getString("date") else "Offline · cached progress · "+value.getString("date")
-        status.append(" · updated ${(System.currentTimeMillis()-value.getLong("server_time_ms"))/1000}s ago")
+        status.append(" · updated ${((System.currentTimeMillis()-value.getLong("server_time_ms"))/1000).coerceAtLeast(0)}s ago")
         val localPending=value.optInt("locally_pending",0)
         value.optString("shared_revision").takeIf{it.length>=8}?.let {status.append(" · confirmed state "+it.take(8))}
         if(localPending>0)status.append(" · $localPending provisional answer(s) awaiting server acknowledgement")
@@ -118,6 +118,20 @@ class MainActivity:Activity() {
         // Anki scheduling convergence. Surface the bridge's true error too.
         val bridgeIssue=storage.getSetting("bridge_status")
         if(bridgeIssue.startsWith("Scheduling sync pending:"))status.append(" · $bridgeIssue")
+        // Server-reported native receipt and observed device liveness are
+        // independent: a synced/offline laptop is NOT marked online.
+        value.optJSONArray("devices")?.objects()?.take(3)?.forEach { device ->
+            val label=device.optString("label","Device").take(40)
+            val age=device.optLong("age_seconds",0)
+            val live=if(device.optBoolean("online",false))"online" else "offline (last seen ${age}s ago)"
+            val receipt=device.optJSONObject("native_sync")
+            val revision=receipt?.optLong("revision",0) ?: 0L
+            val applied=receipt?.optLong("applied_revision",0) ?: 0L
+            val info=if(revision>applied)"Anki sync pending $applied/$revision"
+                     else if(revision>0L)"Anki sync confirmed $applied/$revision"
+                     else "Anki sync not yet verified"
+            status.append(" · $label: $live; $info")
+        }
         val p=value.getJSONObject("progress");val goal=if(value.optString("local_day",value.getString("date"))==value.getString("date"))value.getJSONObject("policy") else value.getJSONObject("settings")
         progress.text="${p.getInt("answers")}/${goal.getInt("lesson_answers")} · ${minOf(100,p.getInt("answers")*100/goal.getInt("lesson_answers"))}% · ${maxOf(0,goal.getInt("lesson_answers")-p.getInt("answers"))} remaining · ${p.getInt("duration_ms")/1000} / ${goal.getInt("lesson_ms")/1000} active seconds · ${value.getInt("streak")} day streak" + if(localPending>0)" (pending confirmation)" else ""
         bridge.text=storage.getSetting("bridge_status")

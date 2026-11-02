@@ -10,7 +10,7 @@ Timestamp: 2026-11-02. GitHub PR #9 on branch `feature/hosted-portable-signing-w
 
 ## Sequential ledger
 - [x] 34 — CI checks that the *actual loaded* add-on registered the review hook and writes a JSON acceptance record before bypassing only the disposable Qt/Python atexit crash; local regression tests pass, cloud Windows check pending.
-- [ ] 35
+- [x] 35 — server includes snapshot age and online/offline status alongside native revision receipts; Android and Windows show those separately from provisional local answers and cached/offline state, with regression tests passing.
 - [ ] 36
 - [ ] 30
 

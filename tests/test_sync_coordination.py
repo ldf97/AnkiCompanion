@@ -112,9 +112,11 @@ def test_sync_status_ui_distinguishes_server_progress_from_native_receipt():
     root=Path(__file__).resolve().parents[1]
     desktop=(root/"desktop/app.py").read_text()
     android=(root/"android/app/src/main/java/org/ankicompanion/app/MainActivity.kt").read_text()
-    assert "Anki sync pending {applied}/{revision}" in desktop
-    assert "Anki sync confirmed {applied}/{revision}" in desktop
-    assert "Anki sync not yet verified" in desktop
+    status=(root/"companion/status.py").read_text()
+    assert "Anki sync pending {applied}/{latest}" in status
+    assert "Anki sync confirmed {applied}/{latest}" in status
+    assert "Anki sync not yet verified" in status
+    assert 'device_status(device)' in desktop
     assert "Anki sync pending $applied/$revision" in android
     assert "Anki sync confirmed $applied/$revision" in android
     assert "Scheduling sync pending:" in android
@@ -131,3 +133,47 @@ def test_cross_device_test_holds_native_provider_alive_until_companion_finishes(
     assert "'observer-finished':'observer_finished'" in backend
     assert phone.index('assertTrue(control("/test/verify-phone"') < phone.index('optBoolean("observer_finished")')
     assert observer.index("widgetHost.stopListening()") < observer.index('signal("observer-finished")')
+
+
+def test_device_liveness_and_native_receipts_are_separate(tmp_path):
+    c=client(tmp_path)
+    now=T+100_000
+    c.post('/v1/snapshots',json=snapshot('laptop',synced=T+2000,status='synced'))
+    first={d['device_id']:d for d in c.get('/v1/state').json()['devices']}
+    assert first['laptop']['online'] is True
+    assert first['laptop']['age_seconds']==0
+    assert 'Anki sync not yet verified' in __import__('companion.status',fromlist=['device_status']).device_status(first['laptop'])
+    # The server's clock is a deterministic fixture; test liveness at the
+    # store layer to avoid silently trusting the Android wall clock.
+    app=create_app(tmp_path,TOKEN,lambda:now+121_000)
+    with TestClient(app,headers={'Authorization':'Bearer '+TOKEN}) as later:
+        device=later.get('/v1/state').json()['devices'][0]
+        assert device['online'] is False and device['age_seconds']==121
+        assert 'offline (last seen 121s ago)' in __import__('companion.status',fromlist=['device_status']).device_status(device)
+
+
+def test_device_receipt_does_not_imply_online(tmp_path):
+    c=client(tmp_path)
+    c.post('/v1/events',json={'device_id':'phone','events':[event()]})
+    publish(c,'phone',T+2500)
+    c.post('/v1/snapshots',json=snapshot('pc',synced=T+3500,applied=1))
+    app=create_app(tmp_path,TOKEN,lambda:T+221_001)
+    with TestClient(app,headers={'Authorization':'Bearer '+TOKEN}) as later:
+        pc=next(d for d in later.get('/v1/state').json()['devices'] if d['device_id']=='pc')
+        from companion.status import device_status
+        assert pc['native_sync']['pending'] is False
+        assert pc['online'] is False
+        assert 'offline' in device_status(pc)
+        assert 'Anki sync confirmed 1/1' in device_status(pc)
+
+
+def test_status_ui_contains_confirmed_and_provisional_states():
+    from pathlib import Path
+    root=Path(__file__).resolve().parents[1]
+    android=(root/'android/app/src/main/java/org/ankicompanion/app/MainActivity.kt').read_text()
+    windows=(root/'desktop/app.py').read_text()
+    assert 'provisional answer(s)' in android
+    assert 'Anki sync confirmed $applied/$revision' in android
+    assert 'last seen ${age}s ago' in android
+    assert 'device_status(device)' in windows
+    assert 'connection retry pending (using cached progress)' in windows
