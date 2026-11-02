@@ -83,8 +83,12 @@ class MainActivity:Activity() {
         val error=storage.getSetting("sync_error")
         status.text=if(error.isEmpty())"Connected · "+value.getString("date") else "Offline · cached progress · "+value.getString("date")
         status.append(" · updated ${(System.currentTimeMillis()-value.getLong("server_time_ms"))/1000}s ago")
+        val localPending=value.optInt("locally_pending",0)
+        if(localPending>0)status.append(" · $localPending answer(s) awaiting server acknowledgement")
+        val native=value.optJSONObject("native_sync")
+        if(native?.optBoolean("pending")==true)status.append(" · Anki scheduling catch-up pending")
         val p=value.getJSONObject("progress");val goal=if(value.optString("local_day",value.getString("date"))==value.getString("date"))value.getJSONObject("policy") else value.getJSONObject("settings")
-        progress.text="${p.getInt("answers")}/${goal.getInt("lesson_answers")} · ${minOf(100,p.getInt("answers")*100/goal.getInt("lesson_answers"))}% · ${maxOf(0,goal.getInt("lesson_answers")-p.getInt("answers"))} remaining · ${p.getInt("duration_ms")/1000} / ${goal.getInt("lesson_ms")/1000} active seconds · ${value.getInt("streak")} day streak"
+        progress.text="${p.getInt("answers")}/${goal.getInt("lesson_answers")} · ${minOf(100,p.getInt("answers")*100/goal.getInt("lesson_answers"))}% · ${maxOf(0,goal.getInt("lesson_answers")-p.getInt("answers"))} remaining · ${p.getInt("duration_ms")/1000} / ${goal.getInt("lesson_ms")/1000} active seconds · ${value.getInt("streak")} day streak" + if(localPending>0)" (pending confirmation)" else ""
         bridge.text=storage.getSetting("bridge_status")
         val line=value.getJSONObject("lineup");val key=line.toString()+value.getBoolean("completed")+value.getInt("streak")+System.currentTimeMillis()/60000
         if(key!=renderedKey) {
@@ -138,6 +142,7 @@ class MainActivity:Activity() {
         val current=state ?: return
         if(!AnkiBridge.permitted(this)){requestAnki();return}
         val s=current.getJSONObject("settings")
+        status.text="Checking Anki scheduling before opening your deck…"
         async({
             AnkiBridge.configure(applicationContext,s)
             AnkiBridge.synchronize(applicationContext)

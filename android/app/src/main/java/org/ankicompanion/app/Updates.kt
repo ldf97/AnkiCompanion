@@ -99,9 +99,17 @@ object Updates {
         val version=if(Build.VERSION.SDK_INT>=28)info.longVersionCode else info.versionCode.toLong()
         require(version>BuildConfig.VERSION_CODE){"Update is not newer"}
         val installed=context.packageManager.getPackageInfo(context.packageName,flags)
-        val old=(if(Build.VERSION.SDK_INT>=28)installed.signingInfo?.apkContentsSigners else installed.signatures)?.map{it.toCharsString()}?.toSet()
-        val new=(if(Build.VERSION.SDK_INT>=28)info.signingInfo?.apkContentsSigners else info.signatures)?.map{it.toCharsString()}?.toSet()
-        require(!old.isNullOrEmpty() && old==new){"APK signing key does not match this installation"}
+        val old=(if(Build.VERSION.SDK_INT>=28)
+            installed.signingInfo?.signingCertificateHistory ?: installed.signingInfo?.apkContentsSigners
+            else installed.signatures)?.map{it.toCharsString()}?.toSet()
+        val new=(if(Build.VERSION.SDK_INT>=28)
+            info.signingInfo?.signingCertificateHistory ?: info.signingInfo?.apkContentsSigners
+            else info.signatures)?.map{it.toCharsString()}?.toSet()
+        // Valid signing-key rotation lineages share the original certificate.
+        // The OS will do its authoritative APK signature/lineage validation.
+        require(!old.isNullOrEmpty() && !new.isNullOrEmpty() && old.intersect(new).isNotEmpty()) {
+            "This installed APK uses a different signing certificate. Android cannot update it in place; existing app data has not been touched."
+        }
         return dest
     }
     fun install(activity:Activity,file:File) {

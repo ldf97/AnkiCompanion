@@ -74,6 +74,16 @@ jobs:
           trap 'rm -f "$ANDROID_KEYSTORE" "$RUNNER_TEMP/store-password" "$RUNNER_TEMP/key-password" "$RUNNER_TEMP/key-alias"' EXIT
           bash gradlew --no-daemon testReleaseUnitTest lintRelease assembleRelease
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
+          # Public certificate fingerprint only. Never store the private key
+          # in source or use an ephemeral debug keystore for a stable release.
+          expected="c6a5e9f1804fdf1083c69e36e03e3a424a0e630e357b573d8a523eea09cea004"
+          signer="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs \
+            app/build/outputs/apk/release/app-release.apk | \
+            sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr '[:upper:]' '[:lower:]')"
+          if [ "$signer" != "$expected" ]; then
+            echo "Android release certificate does not match the stable v1.0.9 signer" >&2
+            exit 1
+          fi
           mkdir -p ../candidate
           cp app/build/outputs/apk/release/app-release.apk ../candidate/AnkiCompanion-Android.apk
       - uses: actions/upload-artifact@v4

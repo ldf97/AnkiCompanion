@@ -8,6 +8,7 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import urlopen
 from zipfile import ZipFile, BadZipFile
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -147,13 +148,63 @@ def recover_eren(client):
     return "Eren artwork activated"
 
 
+def addon_archive():
+    if getattr(sys,'frozen',False):
+        return Path(sys.executable).resolve().parent.parent/'Anki_Companion_Bridge.ankiaddon'
+    return Path(__file__).resolve().parents[1]/'packages'/'Anki_Companion_Bridge.ankiaddon'
+
+
+def ensure_anki_bridge():
+    """Safely install/upgrade the optional desktop add-on without scripting.
+
+    Never read, modify, copy, or replace Anki's collection files. Preserve
+    meta.json and any user's existing add-on configuration/preferences.
+    """
+    roaming=os.environ.get('APPDATA')
+    if not roaming:return 'Anki profile directory not available yet'
+    base=Path(roaming)/'Anki2'
+    if not base.is_dir():return 'Anki not installed yet; will retry next startup'
+    archive=addon_archive()
+    if not archive.is_file():return 'Anki bridge package was not bundled'
+    addons=base/'addons21';addons.mkdir(exist_ok=True)
+    target=addons/'anki_companion_bridge'
+    with ZipFile(archive) as z:
+        names=z.namelist()
+        allowed={'__init__.py','bridge.py','history.py','rules.py','transport.py',
+                 'config.json','config.md','manifest.json'}
+        if set(names)!=allowed or any(z.getinfo(n).file_size>250_000 for n in names):
+            raise ValueError('Bundled desktop bridge did not pass validation')
+        manifest=json.loads(z.read('manifest.json'))
+        if manifest.get('package')!='anki_companion_bridge':
+            raise ValueError('Unexpected add-on package identity')
+        files={n:z.read(n) for n in names}
+    # Detect an old, differently-named instance of OUR bridge. Do not install
+    # a duplicate that would register hooks twice and disrupt Anki.
+    for candidate in addons.iterdir():
+        if not candidate.is_dir() or candidate==target:continue
+        info=candidate/'manifest.json'
+        try:
+            if info.is_file() and json.loads(info.read_text(encoding='utf-8')).get('package')=='anki_companion_bridge':
+                target=candidate;break
+        except (OSError,ValueError):pass
+    if all((target/n).is_file() and (target/n).read_bytes()==b for n,b in files.items()):
+        return 'Anki desktop bridge installed'
+    target.mkdir(exist_ok=True)
+    # Individual atomic replacement means Anki never imports a half-written
+    # Python source file. Existing meta.json/config persists across updates.
+    for name, contents in files.items():
+        dest=target/name;stage=target/(name+'.new')
+        stage.write_bytes(contents);stage.replace(dest)
+    return 'Anki desktop bridge installed; active after Anki next starts'
+
+
 def bootstrap():
-    token = ensure_server()
-    client = Client(LOCAL_URL, token)
-    # Keep the existing history, review data, and private pairing token.
-    skin_message = recover_eren(client)
-    return {"url": LOCAL_URL, "token": token, "allow_lan_http": False,
-            "skin_message": skin_message}
+    token=ensure_server()
+    client=Client(LOCAL_URL,token)
+    skin_message=recover_eren(client)
+    bridge_message=ensure_anki_bridge()
+    return {'url':LOCAL_URL,'token':token,'allow_lan_http':False,
+            'skin_message':skin_message,'bridge_message':bridge_message}
 
 
 def _tunnel_executable():

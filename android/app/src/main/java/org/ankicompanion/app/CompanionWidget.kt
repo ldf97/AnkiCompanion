@@ -26,9 +26,9 @@ class CompanionWidget:AppWidgetProvider() {
                 manager.updateAppWidget(ids,fallback)
             }
         }
-        /** Explicit AnkiDroid REVIEW intent, not AnkiCompanion's slow sync screen.
-         *  AnkiDroid IntentHandler recognizes EXTRA_DECK_ID on ACTION_MAIN and
-         *  enters the reviewer directly, using its own local collection.
+        /** Direct AnkiDroid launcher exists for compatibility, but widget taps
+         *  pass through the background preflight before opening a potentially
+         *  stale card. An active reviewer is never interrupted.
          */
         fun reviewerIntent(targetPackage:String,deckId:Long):Intent =
             Intent(Intent.ACTION_MAIN)
@@ -46,10 +46,10 @@ class CompanionWidget:AppWidgetProvider() {
             val next=state?.optJSONObject("next_decks")?.optJSONObject(phoneId)
             val deckId=next?.optString("id")?.toLongOrNull()?.takeIf{it>0} ?: parentId
             val target=targetPackage ?: try{AnkiBridge.packageName(context)}catch(_:Exception){null}
-            return if(deckId!=null && target!=null)reviewerIntent(target,deckId)
-                else Intent(context,MainActivity::class.java)
-                    .putExtra("widget_setup",true)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            return Intent(context,MainActivity::class.java)
+                .putExtra(if(deckId!=null && target!=null)"study" else "widget_setup",true)
+                .putExtra("widget_target_deck_id",deckId ?: -1L)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
 
         fun buildViews(context:Context,state:org.json.JSONObject?):RemoteViews {
@@ -85,7 +85,9 @@ class CompanionWidget:AppWidgetProvider() {
                 val next=state.optJSONObject("next_decks")?.optJSONObject(store.deviceId)
                 val nextName=next?.optString("name")?.substringAfterLast("::")?.take(34)?.takeIf{it.isNotBlank()}
                 val instruction=if(configured)" · Tap "+(nextName ?: "to study") else " · Select a parent deck in app"
-                views.setTextViewText(R.id.widget_status,label+instruction+if(update)" · Update available" else if(stale)" · Cached" else "")
+                val pending=local.optInt("locally_pending",0)
+                val syncStatus=if(pending>0)" · $pending pending" else if(stale)" · Cached" else ""
+                views.setTextViewText(R.id.widget_status,label+instruction+syncStatus+if(update)" · Update available" else "")
                 frame.image.recycle();frame.badge.recycle()
             }
             return views
