@@ -3,13 +3,20 @@ import json
 
 
 def reconcile(collection_db, outbox_db, collection_id, cursor, recent_floor):
-    rows = collection_db.all('SELECT id,cid,time FROM revlog WHERE id>=? AND ease>0 ORDER BY id LIMIT 1000', cursor)
-    recent = collection_db.all('SELECT id,cid,time FROM revlog WHERE id>=? AND ease>0 ORDER BY id', recent_floor)
-    for rid, cid, duration in rows + recent:
+    rows = collection_db.all('SELECT id,cid,time,ease,ivl,lastIvl FROM revlog WHERE id>=? AND ease>0 ORDER BY id LIMIT 1000', cursor)
+    recent = collection_db.all('SELECT id,cid,time,ease,ivl,lastIvl FROM revlog WHERE id>=? AND ease>0 ORDER BY id', recent_floor)
+    for rid, cid, duration, rating, interval, last_interval in rows + recent:
         payload = dict(collection_id=collection_id, revlog_id=rid, card_id=cid,
-                       duration_ms=min(600000, max(0, duration)))
-        outbox_db.execute('INSERT OR IGNORE INTO outbox VALUES (?,?,0)',
-                         (f'{collection_id}:{rid}:{cid}', json.dumps(payload)))
+                       duration_ms=min(600000, max(0, duration)),rating=rating,
+                       interval=interval,previous_interval=last_interval)
+        identity=f'{collection_id}:{rid}:{cid}'
+        inserted=outbox_db.execute('INSERT OR IGNORE INTO outbox VALUES (?,?,0)',
+                                  (identity,json.dumps(payload)))
+        if inserted.rowcount==0:
+            previous=outbox_db.execute('SELECT payload FROM outbox WHERE id=?',(identity,)).fetchone()
+            if previous and 'rating' not in json.loads(previous[0]):
+                outbox_db.execute('UPDATE outbox SET payload=?,sent=0 WHERE id=?',
+                                  (json.dumps(payload),identity))
     # Reconcile all previously observed rows, including older undo/deletions.
     # A newly imported record may have an ID below the cursor: reset the cursor
     # after each completed collection sync, then page through the backfill again.

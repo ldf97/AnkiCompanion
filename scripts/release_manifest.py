@@ -6,16 +6,18 @@ def make(directory,version,build,commit):
     if not re.fullmatch(r'\d+\.\d+\.\d+',version) or build<1 or not re.fullmatch(r'[a-f0-9]{40}',commit):
         raise ValueError('Use a numeric version, positive build and exact Git commit SHA')
     directory=Path(directory);assets={}
-    for platform,name in [('android','AnkiCompanion-Android.apk'),('windows','AnkiCompanion-Windows-Setup.exe'),('source','AnkiCompanion-source.zip')]:
+    for platform,name in [('android','AnkiCompanion-Android.apk'),('ankidroid','AnkiDroid-Companion-Android.apk'),('windows','AnkiCompanion-Windows-Setup.exe'),('source','AnkiCompanion-source.zip')]:
         path=directory/name
         if not path.is_file():
-            if platform=='android':
+            if platform in ('android','ankidroid'):
                 # Publish Windows updates even before the owner provisions a
                 # private persistent Android signing keystore. Never ship an
                 # APK signed with a rotating ephemeral CI key.
                 continue
             raise ValueError('Missing release input: '+name)
         raw=path.read_bytes();assets[platform]=dict(filename=name,size=len(raw),sha256=hashlib.sha256(raw).hexdigest())
+        if platform=='android': assets[platform]['version_code']=build
+        if platform=='ankidroid': assets[platform]['version_code']=220000000+build
     result=dict(schema_version=1,version=version,build=build,commit=commit,assets=assets)
     (directory/'update.json').write_text(json.dumps(result,indent=2))
     return result

@@ -13,7 +13,10 @@ class ReviewChangedReceiver:BroadcastReceiver() {
         if(intent.action!="org.ankicompanion.app.REVIEWS_CHANGED")return
         val now=SystemClock.elapsedRealtime();val previous=last.get()
         if(now-previous<1000 || !last.compareAndSet(previous,now))return
-        val pending=goAsync()
-        Sync.executor.execute {try{Sync.run(context.applicationContext)}finally{pending.finish()}}
+        // BroadcastReceiver goAsync has a short OS deadline; Anki collection
+        // sync may legitimately take longer. Durable JobScheduler work survives
+        // process death and this executor gives foreground study immediate wakeup.
+        Sync.schedule(context.applicationContext,true)
+        Sync.executor.execute {Sync.run(context.applicationContext)}
     }
 }

@@ -19,7 +19,7 @@ object Sync {
     fun schedule(context:Context,immediate:Boolean=false) {
         val scheduler=context.getSystemService(JobScheduler::class.java)
         val builder=JobInfo.Builder(if(immediate)201 else 200,ComponentName(context,SyncJob::class.java))
-            .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).setPersisted(!immediate)
+            .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).setPersisted(true)
         if(immediate)builder.setMinimumLatency(0) else builder.setPeriodic(15*60*1000L)
         scheduler.schedule(builder.build())
     }
@@ -41,15 +41,51 @@ object Sync {
             }
             catch(e:Exception){store.setSetting("bridge_status","AnkiDroid review-history bridge unavailable; desktop reports phone reviews after collection sync")}
             try {
-                outbox.send(api,store.deviceId)
-                if(AnkiBridge.permitted(context))api.json("/v1/snapshots","POST",JSONObject().put("device_id",store.deviceId).put("label","Android phone").put("decks",JSONArray(AnkiBridge.decks(context))).put("sync_status",AnkiBridge.capabilities(context)?.getString("sync_status") ?: "Bridge unavailable").put("collection_synced_ms",AnkiBridge.capabilities(context)?.getLong("synced_ms") ?: 0))
-                val state=api.json("/v1/state");val lineup=state.getJSONObject("lineup")
+                outbox.send(api,store.deviceId,store)
+                val collectionId=config.optString("collection_id","primary")
+                fun reportNative(applied:Long,ticket:String="") {
+                    if(!AnkiBridge.permitted(context))return
+                    val capability=AnkiBridge.capabilities(context)
+                    api.json("/v1/snapshots","POST",JSONObject()
+                        .put("device_id",store.deviceId).put("collection_id",collectionId)
+                        .put("applied_revision",applied).put("native_generation",capability?.getLong("generation") ?: 0L)
+                        .put("native_upload_ticket",ticket)
+                        .put("label","Android phone")
+                        .put("decks",JSONArray(AnkiBridge.decks(context)))
+                        .put("sync_status",capability?.getString("sync_status") ?: "Bridge unavailable")
+                        .put("collection_synced_ms",capability?.getLong("synced_ms") ?: 0L))
+                }
+                val applied=store.getSetting("native_applied_revision","0").toLongOrNull() ?: 0L
+                reportNative(applied)
+                val state=api.json("/v1/state?device_id="+java.net.URLEncoder.encode(store.deviceId,"UTF-8")
+                    +"&collection_id="+java.net.URLEncoder.encode(collectionId,"UTF-8"))
+                val lineup=state.getJSONObject("lineup")
                 Skins(context).ensure(api,lineup.getString("skin_id"),lineup.getString("skin_version"))
                 store.save("commands.json",api.json("/v1/commands/"+store.deviceId));
                 Commands.notify(context)
                 store.save("state.json",state);store.setSetting("sync_error","")
                 AnkiBridge.configure(context,state.getJSONObject("settings"))
+                val sync=state.optJSONObject("native_sync")
+                val ticket=sync?.optString("outgoing_ticket","")?.ifEmpty {store.getSetting("native_upload_ticket")} ?: store.getSetting("native_upload_ticket")
+                if(ticket.isNotEmpty())store.setSetting("native_upload_ticket",ticket)
+                val remotePending=sync?.optBoolean("pending")==true
+                if(ticket.isNotEmpty() || remotePending) {
+                    try {
+                        // A successful native Anki sync BEFORE publishing its
+                        // matching server ticket proves the collection upload
+                        // occurred. A stale prior synced timestamp is insufficient.
+                        // Runs only on Sync.executor, never the card reviewer UI.
+                        AnkiBridge.synchronize(context)
+                        val version=if(remotePending)sync!!.getLong("revision") else applied
+                        reportNative(version,ticket)
+                        if(ticket.isNotEmpty())store.setSetting("native_upload_ticket","")
+                        store.setSetting("native_applied_revision",version.toString())
+                    } catch(e:Exception){
+                        store.setSetting("bridge_status","Scheduling sync pending: "+(e.message ?: "Native sync unavailable"))
+                    }
+                }
                 try {Updates.check(context,api)}catch(e:Exception){store.setSetting("update_error",e.message ?: "Update check failed")}
+                try {Updates.checkAnkiDroid(context)}catch(e:Exception){store.setSetting("ankidroid_update_error",e.message ?: "Update check failed")}
                 CompanionWidget.refresh(context)
                 return outbox.overlay(state)
             } finally {outbox.close()}

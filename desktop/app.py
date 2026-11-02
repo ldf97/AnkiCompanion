@@ -154,7 +154,7 @@ class Window(QMainWindow):
             self._bootstrapping=False
             self.config={k:value[k] for k in ('url','token','allow_lan_http')}
             write_json(self.config_path,self.config,private=True)
-            self.status.setText(value['skin_message'])
+            self.status.setText(value['skin_message']+' · '+value.get('bridge_message',''))
             self.refresh()
         job=self.launch(first_run.bootstrap,ready)
         job.failed.connect(lambda _:setattr(self,'_bootstrapping',False))
@@ -204,7 +204,10 @@ class Window(QMainWindow):
         if frame:
             self.panel.set_frame(frame,warning,warn);self.dock.panel.set_frame(frame,warning,warn);self.last_key=key
         age=max(0,int((time.time()*1000-value['server_time_ms'])/1000))
-        self.status.setText(('Connected · last server update '+str(age)+'s ago') if online else ('Offline · last server update '+str(age)+'s ago'+(' · new day is not yet synced' if old_day else '')))
+        status=('Connected · last server update '+str(age)+'s ago') if online else ('Offline · last server update '+str(age)+'s ago'+(' · new day is not yet synced' if old_day else ''))
+        waiting=[d['label'] for d in value['devices'] if d.get('native_sync',{}).get('pending')]
+        if waiting:status+=' · Native Anki catch-up pending: '+', '.join(waiting[:3])
+        self.status.setText(status)
         p=value['progress'];g=value['policy'];ratio=min(p['answers']/g['lesson_answers'],p['duration_ms']/g['lesson_ms'] if g['lesson_ms'] else 1)
         self.progress.setValue(min(100,int(ratio*100)))
         remaining=max(0,g['lesson_answers']-p['answers']);percent=min(100,p['answers']*100//g['lesson_answers'])

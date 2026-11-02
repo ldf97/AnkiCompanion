@@ -12,6 +12,10 @@ class Event(Strict):
     revlog_id: int = Field(gt=0)
     card_id: int = Field(gt=0)
     duration_ms: int = Field(ge=0, le=600_000)
+    # Optional for older installed clients; incoming new review hooks send it.
+    rating: int | None = Field(default=None, ge=1, le=4)
+    interval: int | None = Field(default=None, ge=-10_000, le=100_000)
+    previous_interval: int | None = Field(default=None, ge=-10_000, le=100_000)
     @property
     def key(self): return f'{self.collection_id}:{self.revlog_id}:{self.card_id}'
 
@@ -21,6 +25,7 @@ class Events(Strict):
 
 class Retractions(Strict):
     ids: list[str] = Field(max_length=1000)
+    device_id: str = Field(default="unknown", min_length=1, max_length=100)
 
 class Deck(Strict):
     id: str = Field(min_length=1, max_length=32, pattern=r'^\d+$')
@@ -31,6 +36,10 @@ class Deck(Strict):
 
 class Snapshot(Strict):
     device_id: str = Field(min_length=1, max_length=100)
+    collection_id: str = Field(default='primary', min_length=1, max_length=100, pattern=r'^[A-Za-z0-9_-]+$')
+    applied_revision: int = Field(default=0, ge=0)
+    native_generation: int = Field(default=0, ge=0)
+    native_upload_ticket: str = Field(default='', max_length=64, pattern=r'^(?:[0-9a-f]{32})?$')
     label: str = Field(min_length=1, max_length=100)
     decks: list[Deck] = Field(max_length=10000)
     sync_status: str = Field(default='unknown',max_length=300)
