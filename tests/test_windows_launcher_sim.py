@@ -130,6 +130,8 @@ def test_real_anki_hook_is_noniterable_generated_object():
     assert "getattr(review_hook, '_hooks', ())" in source
     assert 'review_hook.count() > 0' in source
     assert 'for fn in gui_hooks.reviewer_did_answer_card' not in source
+
+
 def test_windows_aniki_smoke_supports_gui_error_handler_without_flush():
     """Anki 26.09 wraps sys.stderr with a non-file ErrorHandler."""
     class ErrorHandler:
