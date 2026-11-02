@@ -47,6 +47,8 @@ class Store:
                 db.execute("ALTER TABLE sync_pending ADD COLUMN ticket TEXT NOT NULL DEFAULT ''")
             db.execute('INSERT OR IGNORE INTO meta VALUES (?,?)', ('settings', Settings(revision=0).model_dump_json()))
             db.execute('INSERT OR IGNORE INTO meta VALUES (?,?)', ('seed', secrets.token_hex(24)))
+            # Durable notification cursor: survives restarts and works across workers.
+            db.execute('INSERT OR IGNORE INTO meta VALUES (?,?)', ('change_sequence', '0'))
 
     @contextmanager
     def tx(self):
@@ -61,6 +63,18 @@ class Store:
             except Exception:
                 db.rollback(); raise
             finally: db.close()
+
+    @staticmethod
+    def _notify_change(db):
+        # Increment only inside the same transaction as the actual mutation.
+        db.execute("UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='change_sequence'")
+
+    def change_sequence(self):
+        # A read-only connection prevents watcher requests from serializing all
+        # writers through the normal BEGIN IMMEDIATE transaction.
+        with sqlite3.connect(self.path, timeout=5) as db:
+            row=db.execute("SELECT value FROM meta WHERE key='change_sequence'").fetchone()
+            return int(row[0]) if row else 0
 
     def _settings(self, db):
         return Settings.model_validate(json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])).model_dump()
@@ -90,6 +104,7 @@ class Store:
                 db.execute("UPDATE days SET lineup=? WHERE day=?",
                            (json.dumps(lineup), current_day))
             db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(settings),))
+            self._notify_change(db)
             return settings
 
     def _day(self, db, day, packs):
@@ -106,7 +121,7 @@ class Store:
     def add_events(self, events, packs, now_ms=None, device_id='unknown'):
         now_ms = now_ms or int(time.time() * 1000)
         with self.tx() as db:
-            settings = self._settings(db); inserted = 0
+            settings = self._settings(db); inserted = 0; enriched = False
             for event in events:
                 if event.revlog_id > now_ms + 300_000: raise ValueError('Review event is in the future')
                 if event.revlog_id < 946684800000: raise ValueError('Invalid review timestamp')
@@ -130,6 +145,7 @@ class Store:
                         if before is None and after is not None:previous[field]=after
                     if previous!=json.loads(row['payload']):
                         db.execute('UPDATE events SET payload=? WHERE id=?',(json.dumps(previous),event.key))
+                        enriched = True
                     continue
                 day = study_day(event.revlog_id, settings['timezone'], settings['rollover_minute'])
                 self._day(db, day, packs)
@@ -147,6 +163,7 @@ class Store:
                 row=db.execute('SELECT ticket FROM sync_pending WHERE collection=? AND device=? AND dirty=1',
                                (collection,device_id)).fetchone()
                 if row and row['ticket']:tickets[collection]=row['ticket']
+            if inserted or enriched:self._notify_change(db)
             return dict(inserted=inserted, received=len(events),native_upload_tickets=tickets)
 
 
@@ -186,12 +203,14 @@ class Store:
         # queue that change for native synchronization, independently of totals.
         now_ms = now_ms or int(time.time()*1000)
         with self.tx() as db:
+            changed=False
             for identity in ids:
                 if len(identity) > 250: raise ValueError('Event ID too long')
-                db.execute('INSERT OR IGNORE INTO tombstones VALUES (?)', (identity,))
-                db.execute('UPDATE events SET retracted=1 WHERE id=?', (identity,))
+                new_tombstone=bool(db.execute('INSERT OR IGNORE INTO tombstones VALUES (?)', (identity,)).rowcount)
+                newly_retracted=bool(db.execute('UPDATE events SET retracted=1 WHERE id=? AND retracted=0', (identity,)).rowcount)
+                if new_tombstone or newly_retracted:changed=True
                 row=db.execute('SELECT payload FROM events WHERE id=?',(identity,)).fetchone()
-                if row:
+                if row and (new_tombstone or newly_retracted):
                     collection=json.loads(row['payload'])['collection_id']
                     ticket=secrets.token_hex(16)
                     db.execute('''INSERT INTO sync_pending(collection,device,dirty,latest_event_ms,ticket)
@@ -199,6 +218,7 @@ class Store:
                         dirty=1,latest_event_ms=MAX(sync_pending.latest_event_ms,excluded.latest_event_ms),
                         ticket=excluded.ticket''',
                         (collection,device_id,now_ms,ticket))
+            if changed:self._notify_change(db)
 
     def snapshot(self, snapshot, now_ms):
         with self.tx() as db:
@@ -217,6 +237,7 @@ class Store:
                 if (pending and pending['dirty'] and pending['ticket'] and
                         secrets.compare_digest(snapshot.native_upload_ticket,pending['ticket'])):
                     current+=1
+                    self._notify_change(db)
                     db.execute('UPDATE sync_versions SET revision=? WHERE collection=?',(current,collection))
                     db.execute("UPDATE sync_pending SET dirty=0,ticket='' WHERE collection=? AND device=?",
                                (collection,snapshot.device_id))
@@ -296,6 +317,7 @@ class Store:
         with self.tx() as db:
             db.execute('INSERT INTO commands VALUES (?,?,?,?,0)',
                 (identity, command.device_id, command.model_dump_json(), now_ms))
+            self._notify_change(db)
         return identity
 
     def commands(self, device, now_ms):

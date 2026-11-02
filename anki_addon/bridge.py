@@ -7,6 +7,7 @@ from aqt.qt import QTimer
 from .transport import Client
 from .rules import next_deck
 from .history import reconcile
+from .review_epoch import ReviewEpoch
 
 NAME=__package__; controller=None
 
@@ -22,11 +23,14 @@ class Bridge:
             mw.addonManager.writeConfig(NAME,self.config)
         self.file=Path(mw.pm.profileFolder())/'anki-companion-outbox.sqlite3'
         self.lock=threading.RLock();self.stopped=False;self.busy=False;self.syncing=False
-        self.collection_synced_ms=0;self.last_sync=0;self.last_scan=0;self.review_dirty=False;self.settings={};self.backfill_active=True;self.backfill_pending=False;self.high_water=int((time.time()-370*86400)*1000)
+        self.collection_synced_ms=0;self.last_sync=0;self.last_scan=0;
+        self.answers=ReviewEpoch();self.stop_event=threading.Event();self.settings={};self.backfill_active=True;self.backfill_pending=False;self.high_water=int((time.time()-370*86400)*1000)
         with self.db() as db:
             db.executescript('CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,payload TEXT NOT NULL,sent INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS undo(id TEXT PRIMARY KEY,sent INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY);')
         self.timer=QTimer(mw);self.timer.timeout.connect(self.tick);self.timer.start(2000)
         QTimer.singleShot(1000,self.tick)
+        self.watcher=threading.Thread(target=self.watch_changes,daemon=True)
+        self.watcher.start()
     def discover_local_token(self):
         if self.config.get('token'):return
         home=Path(os.environ.get('LOCALAPPDATA') or
@@ -42,7 +46,25 @@ class Bridge:
             pass
 
     def db(self):return sqlite3.connect(self.file,timeout=0.5)
-    def stop(self):self.stopped=True;self.timer.stop()
+    def stop(self):
+        self.stopped=True;self.stop_event.set();self.timer.stop()
+    def watch_changes(self):
+        # A push-like wakeup without credential-bearing broadcasts or a busy
+        # loop. The cursor lives on the server so reconnects do not lose updates.
+        sequence=None
+        while not self.stop_event.is_set():
+            try:
+                api=self.client()
+                query='/v1/changes' if sequence is None else '/v1/changes?since='+str(sequence)+'&wait_ms=3500'
+                state=api.request(query)
+                changed=sequence is not None and state['sequence']!=sequence
+                sequence=state['sequence']
+                if changed and not self.stopped:
+                    mw.taskman.run_on_main(lambda:self.tick() if not self.stopped else None)
+            except Exception:
+                sequence=None
+                self.stop_event.wait(2)
+
     def client(self):return Client(self.config['server_url'],self.config['token'],self.config.get('allow_lan_http',False))
     def scan(self):
         if not mw.col:return
@@ -75,13 +97,15 @@ class Bridge:
         try:
             # Never scan the full history on every five-second GUI timer.
             # A review wakes it immediately; idle history reads are throttled.
-            if self.review_dirty or time.time()-self.last_scan>=20:
+            if self.answers.needs_scan or time.time()-self.last_scan>=20:
                 self.scan();self.last_scan=time.time()
+                self.answers.scan_complete()
             decks=self.decks()
         except Exception as exc:print('Anki Companion scan:',exc);return
+        captured_generation=self.answers.scanned
         self.busy=True
         def worker():
-            error=None;commands=[];settings={};native={};source_ticket=''
+            error=None;commands=[];settings={};native={};source_ticket='';uploaded_generation=0
             try:
                 api=self.client()
                 with self.lock,self.db() as db:
@@ -91,6 +115,7 @@ class Bridge:
                     receipt=api.request('/v1/events','POST',{'device_id':self.config['device_id'],'events':[json.loads(p) for i,p in pending]})
                     source_ticket=receipt.get('native_upload_tickets',{}).get(self.config.get('collection_id','primary'),'')
                     with self.lock,self.db() as db:db.executemany('UPDATE outbox SET sent=1 WHERE id=?',[(i,) for i,p in pending])
+                uploaded_generation=captured_generation
                 if undo:
                     api.request('/v1/events/retract','POST',{'ids':undo,'device_id':self.config['device_id']})
                     with self.lock,self.db() as db:db.executemany('UPDATE undo SET sent=1 WHERE id=?',[(i,) for i in undo])
@@ -107,10 +132,11 @@ class Bridge:
                 source_ticket=native.get('outgoing_ticket') or source_ticket
                 commands=api.request('/v1/commands/'+self.config['device_id'])['commands']
             except Exception as exc:error=str(exc)
-            if not self.stopped:mw.taskman.run_on_main(lambda:self.received(commands,settings,native,source_ticket,error))
+            if not self.stopped:mw.taskman.run_on_main(lambda:self.received(commands,settings,native,source_ticket,uploaded_generation,error))
         threading.Thread(target=worker,daemon=True).start()
-    def received(self,commands,settings,native,source_ticket,error):
+    def received(self,commands,settings,native,source_ticket,uploaded_generation,error):
         self.busy=False
+        if uploaded_generation:self.answers.upload_complete(uploaded_generation)
         if source_ticket and source_ticket!=self.confirmed_ticket:
             self.pending_ticket=source_ticket
             self.config['native_upload_ticket']=source_ticket
@@ -144,7 +170,10 @@ class Bridge:
                 self.sync_then(lambda:self.mark_applied(required))
             # Never reset the active review card out from under the user.
             return
-        if self.config.get('auto_sync',True) and mw.state in ('deckBrowser','overview','review') and time.time()-self.last_sync>(2 if self.review_dirty else 10):
+        if (not error and self.config.get('auto_sync',True) and
+                not self.answers.needs_scan and self.answers.uploaded>=self.answers.answered and
+                mw.state in ('deckBrowser','overview','review') and
+                time.time()-self.last_sync>(2 if self.answers.needs_sync else 10)):
             self.sync_then(lambda:None)
 
     def mark_applied(self,version):
@@ -162,6 +191,8 @@ class Bridge:
             print('Anki Companion: configure native Anki sync before automatic handoff')
             return
         self.syncing=True;self.last_sync=time.time()
+        started_epoch=self.answers.sync_started()
+        started_ticket=self.pending_ticket
         # Do not emit Anki's global sync hooks manually; they can invoke
         # unrelated add-ons and cause re-entrant callbacks.
         def finished(future):
@@ -174,9 +205,11 @@ class Bridge:
                 if result.required!=result.NO_CHANGES:
                     print('Anki Companion: complete initial/full sync in Anki before study handoff')
                     return
-                self.collection_synced_ms=int(time.time()*1000);self.review_dirty=False
-                if self.pending_ticket:
-                    self.confirmed_ticket=self.pending_ticket
+                self.collection_synced_ms=int(time.time()*1000)
+                self.answers.sync_complete(started_epoch)
+                # Never confirm a ticket generated after this sync started.
+                if started_ticket and self.pending_ticket==started_ticket:
+                    self.confirmed_ticket=started_ticket
                     self.pending_ticket=''
                     self.config['native_upload_ticket']=''
                     self.config['native_confirmed_ticket']=self.confirmed_ticket
@@ -201,11 +234,14 @@ class Bridge:
         if not selected:return
         identity=selected['id']
         mw.col.decks.select(int(identity));mw.moveToState('review')
-    def answered(self,*args):QTimer.singleShot(100,self.after_answer)
+    def answered(self,*args):
+        # The Anki review hook has committed an answer. Record the generation
+        # NOW; a native sync in progress must not erase this pending work.
+        self.answers.answer()
+        QTimer.singleShot(100,self.after_answer)
     def after_answer(self):
         if self.stopped or not mw.col:return
         try:
-            self.review_dirty=True
             self.tick()
             if mw.state!='review' or not self.settings.get('parent_deck_id'):return
             decks=self.decks();current=str(mw.col.decks.current()['id'])

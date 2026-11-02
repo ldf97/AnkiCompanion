@@ -67,6 +67,20 @@ def create_app(data_dir=None, token=None, clock=None):
         except Exception as exc:raise HTTPException(502,'Update download failed: '+str(exc)) from exc
         return FileResponse(path,filename=name,media_type='application/octet-stream')
 
+    @api.get('/v1/changes', dependencies=[Depends(auth)])
+    def changes(since: int = 0, wait_ms: int = 0):
+        # Authenticated, bounded, cross-process-safe long polling. No events,
+        # identities, tokens, or artwork are sent over the notification channel.
+        if since < 0 or not 0 <= wait_ms <= 4000:
+            raise HTTPException(400, 'Invalid change cursor or wait')
+        deadline = time.monotonic() + wait_ms / 1000.0
+        while True:
+            sequence = store.change_sequence()
+            if sequence != since or time.monotonic() >= deadline:
+                return {'sequence':sequence, 'changed':sequence != since,
+                        'reset':sequence < since}
+            time.sleep(min(0.2, max(0, deadline - time.monotonic())))
+
     @api.get('/v1/state', dependencies=[Depends(auth)])
     def state(device_id: str = '', collection_id: str = 'primary'):
         value = store.state(packs, now())
