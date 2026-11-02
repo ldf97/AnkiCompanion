@@ -89,7 +89,7 @@ object Portability {
         val preferences=content.getJSONObject("preferences")
         val editor=context.getSharedPreferences("companion",Context.MODE_PRIVATE).edit()
         for(key in retainedPrefs)if(preferences.has(key))editor.putString(key,preferences.getString(key))
-        editor.apply()
+        check(editor.commit()){"Could not restore stored review cursors"}
         for(name in listOf("state.json","commands.json","update.json","ankidroid-update.json"))
             content.optJSONObject(name)?.let{storage.save(name,it)}
         if(restoredConnection!=null)storage.saveConnection(restoredConnection)

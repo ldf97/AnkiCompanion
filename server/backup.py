@@ -5,6 +5,7 @@ Snapshots live in a separate, persistent, operator-controlled Docker volume.
 This is a backup, not a replacement for a provider-level off-host backup.
 """
 import argparse
+from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -40,8 +41,8 @@ def snapshot_server(data_dir, backups_dir):
         copied = stage / "companion.sqlite3"
         # sqlite3.backup() includes committed WAL transactions; copying a live
         # .sqlite3 file alone would silently lose recent answers.
-        with sqlite3.connect(f"file:{source.as_posix()}?mode=ro", uri=True, timeout=30) as active:
-            with sqlite3.connect(copied) as saved:
+        with closing(sqlite3.connect(f"file:{source.as_posix()}?mode=ro", uri=True, timeout=30)) as active:
+            with closing(sqlite3.connect(copied)) as saved:
                 active.backup(saved)
                 result = saved.execute("PRAGMA integrity_check").fetchone()
                 if result is None or result[0] != "ok":

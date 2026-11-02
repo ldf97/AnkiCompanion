@@ -3,8 +3,8 @@ set -euo pipefail
 # Called only with production-signed release candidates, never CI debug APKs.
 mkdir -p test-results/signed-upgrade
 if [[ ! -f candidate/AnkiCompanion-Android.apk || ! -f candidate/AnkiDroid-Companion-Android.apk ]]; then
-  echo 'No production-signed Android candidate; update acceptance cannot be asserted.'
-  exit 0
+  echo 'Required production-signed Android packages are missing; refusing false-positive upgrade acceptance.' >&2
+  exit 1
 fi
 sha256sum candidate/*.apk >test-results/signed-upgrade/candidates.sha256
 old=test-results/signed-upgrade/AnkiCompanion-v1.0.9.apk

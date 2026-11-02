@@ -166,3 +166,36 @@ def test_switch_skin_immediately_preserves_reviews_and_frozen_goal(client, tmp_p
     assert after['streak'] == before['streak']
     assert after['lineup']['date'] == before['lineup']['date']
     assert client.get('/v1/frame.png').status_code == 200
+
+def test_restart_reuses_token_settings_streak_and_private_skin(tmp_path):
+    import json, shutil
+    from fastapi.testclient import TestClient
+    from pathlib import Path
+    from server.main import create_app
+    home=tmp_path/"persisted"
+    original=create_app(home,clock=lambda:NOW)
+    secret=(home/"token.txt").read_text()
+    pack=home/"packs"/"owner_skin"/"1.0.0"
+    shutil.copytree(Path(__file__).resolve().parents[1]/"skins"/"study_companion",pack)
+    skin_json=pack/"skin.json"
+    manifest=json.loads(skin_json.read_text())
+    manifest.update(id="owner_skin",name="Private owner skin")
+    skin_json.write_text(json.dumps(manifest))
+    with TestClient(original,headers={"Authorization":"Bearer "+secret}) as client:
+        original.state.packs._cache=None
+        settings=client.get("/v1/settings").json()
+        settings.update(lesson_answers=31,skin_id="owner_skin",skin_version="1.0.0")
+        assert client.put("/v1/settings",json=settings).status_code==200
+        assert client.post("/v1/events",json={"events":[event()]}).status_code==200
+        before=client.get("/v1/state").json()
+    artwork_hash=__import__("hashlib").sha256(skin_json.read_bytes()).hexdigest()
+    restarted=create_app(home,clock=lambda:NOW)
+    assert (home/"token.txt").read_text()==secret
+    with TestClient(restarted,headers={"Authorization":"Bearer "+secret}) as client:
+        after=client.get("/v1/state").json()
+        assert after["settings"]==before["settings"]
+        assert after["progress"]==before["progress"]
+        assert after["seed"]==before["seed"]
+        assert after["streak"]==before["streak"]
+        assert after["lineup"]==before["lineup"]
+    assert __import__("hashlib").sha256(skin_json.read_bytes()).hexdigest()==artwork_hash

@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.util.AtomicFile
 import org.json.JSONObject
 import java.io.File
 import java.security.KeyStore
@@ -18,7 +19,7 @@ class Storage(val context:Context) {
     val root=context.filesDir
     val deviceId:String get() {
         var id=prefs.getString("device_id",null)
-        if(id==null){id="android-"+UUID.randomUUID().toString();prefs.edit().putString("device_id",id).apply()}
+        if(id==null){id="android-"+UUID.randomUUID().toString();check(prefs.edit().putString("device_id",id).commit()){"Could not save stable device ID"}}
         return id
     }
     private fun key():SecretKey {
@@ -40,13 +41,27 @@ class Storage(val context:Context) {
     fun saveConnection(value:JSONObject) {
         val cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,key())
         val encrypted=cipher.iv+cipher.doFinal(value.toString().toByteArray(Charsets.UTF_8))
-        prefs.edit().putString("connection",Base64.encodeToString(encrypted,Base64.NO_WRAP)).apply()
+        check(prefs.edit().putString("connection",Base64.encodeToString(encrypted,Base64.NO_WRAP)).commit()){"Could not save encrypted connection"}
     }
-    fun load(name:String):JSONObject? = try{JSONObject(File(root,name).readText())}catch(e:Exception){null}
+    // Android AtomicFile rolls back a torn write if an APK update or app
+    // shutdown interrupts a JSON replacement. Normal updates reuse filesDir.
+    fun load(name:String):JSONObject? = try {
+        val file=AtomicFile(File(root,name))
+        JSONObject(String(file.openRead().use{it.readBytes()},Charsets.UTF_8))
+    } catch(e:Exception){null}
     @Synchronized fun save(name:String,value:JSONObject) {
-        val dest=File(root,name);val temp=File(root,"$name.tmp");temp.writeText(value.toString())
-        check(temp.renameTo(dest)){"Cannot save $name"}
+        val file=AtomicFile(File(root,name))
+        val stream=file.startWrite()
+        try {
+            stream.write(value.toString().toByteArray(Charsets.UTF_8))
+            file.finishWrite(stream)
+        } catch(e:Exception) {
+            file.failWrite(stream)
+            throw e
+        }
     }
     fun getSetting(name:String,default:String=""):String=prefs.getString(name,default) ?: default
-    fun setSetting(name:String,value:String){prefs.edit().putString(name,value).apply()}
+    fun setSetting(name:String,value:String){
+        check(prefs.edit().putString(name,value).commit()){"Could not save $name"}
+    }
 }

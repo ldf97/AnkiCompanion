@@ -41,3 +41,15 @@ def test_android_self_updater_exposes_portable_recovery_and_both_packages():
 def test_android_pre_29_outbox_explicitly_implements_closeable():
     source=(Path(__file__).resolve().parents[1]/"android/app/src/main/java/org/ankicompanion/app/Outbox.kt").read_text()
     assert 'SQLiteOpenHelper(context,"reviews.db",null,1),java.io.Closeable' in source
+
+def test_normal_android_update_uses_atomic_file_and_committed_preferences():
+    # Source-level gate for actual Android framework-backed state preservation.
+    source=(ROOT/'android/app/src/main/java/org/ankicompanion/app/Storage.kt').read_text()
+    assert "AtomicFile(File(root,name))" in source
+    assert "file.finishWrite(stream)" in source and "file.failWrite(stream)" in source
+    assert 'commit()){"Could not save encrypted connection"}' in source
+    assert 'commit()){"Could not save stable device ID"}' in source
+    portable=(ROOT/'android/app/src/main/java/org/ankicompanion/app/Portability.kt').read_text()
+    assert 'editor.commit()' in portable
+    gate=(ROOT/'scripts/check_signed_android_upgrade.sh').read_text()
+    assert "exit 1" in gate.split("No production-signed Android candidate")[0] or "exit 1" in gate.split("Required production-signed Android packages are missing")[1].split("fi",1)[0]
