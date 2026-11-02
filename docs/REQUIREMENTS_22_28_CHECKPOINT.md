@@ -19,7 +19,7 @@ Do not merge or publish until full CI, signing, real-device upgrade and Anki acc
 - [x] **25**: Direct and automatic candidate workflows now require the entire reusable CI suite, fail when persistent signing secrets are absent, demand both production-signed Android packages, and only publish after an explicit approved release dispatch.
 - [x] **26**: Android resumes the already verified APK after the OS install-source permission screen without downloading again, preserving native installer confirmation; Windows already downloads, SHA-verifies and launches the release from the in-app Update button.
 - [x] **27**: Windows GUI now offers one-click Repair setup and automatically retries installing the safely packaged Anki bridge every 10 minutes, retaining hosted pairing and avoiding terminal instructions; Android handles system permissions in its own interface.
-- [ ] **28**: Not started.
+- [x] **28**: Encrypted Android exceptional-signing recovery now includes byte-exact private skin files with integrity/path/overwrite checks, alongside the prior encrypted connection, preferences and durable pending outbox; a new emulator test validates restored artwork after deletion.
 
 ## External acceptance limitations
 Google Compute Engine billing/project and private-state migration remain unprovisioned; the actual phone's Android signing certificate is unknown; physical-device acceptance remains outstanding.

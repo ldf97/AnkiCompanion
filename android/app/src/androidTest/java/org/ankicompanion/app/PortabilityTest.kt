@@ -3,12 +3,26 @@ package org.ankicompanion.app
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONObject
+import java.io.File
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class PortabilityTest {
+    @Test fun encryptedRecoveryContainsOriginalPrivateSkinAndRestoresExactBytes() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val file=File(context.filesDir,"packs/recovery_test/1.0.0/original.png")
+        check(file.parentFile!!.mkdirs() || file.parentFile!!.isDirectory)
+        val original=byteArrayOf(0,1,2,3,4,5,6,7,8,9,10)
+        file.writeBytes(original)
+        val encrypted=Portability.exportToBytes(context,"original skin passphrase 2026")
+        assertFalse(String(encrypted).contains("original.png"))
+        assertTrue(file.delete())
+        Portability.restoreFromBytes(context,encrypted,"original skin passphrase 2026")
+        assertArrayEquals(original,file.readBytes())
+    }
+
     @Test fun encryptedRecoveryRoundTripAndWrongPasswordCannotRestore() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val storage=Storage(context)

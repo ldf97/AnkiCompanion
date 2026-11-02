@@ -82,3 +82,16 @@ def test_android_update_permission_flow_resumes_installer_without_new_download()
     assert main.count('installDownloaded(file as File)')==2
     assert 'Updates.install(this,candidate)' in main
     assert 'ACTION_CREATE_DOCUMENT' in main  # Exceptional recovery remains separate.
+
+
+def test_encrypted_android_migration_includes_original_private_skin_bytes():
+    source=(ROOT/'android/app/src/main/java/org/ankicompanion/app/Portability.kt').read_text()
+    instrument=(ROOT/'android/app/src/androidTest/java/org/ankicompanion/app/PortabilityTest.kt').read_text()
+    assert 'private_skin_files' in source
+    assert 'content.put("private_skin_files",exportPrivateSkins(context))' in source
+    assert 'val skins=verifiedPrivateSkins(context,content)' in source
+    assert 'restorePrivateSkins(skins)' in source
+    assert 'Skin recovery path escapes private storage' in source
+    assert 'Private skin checksum mismatch' in source
+    assert 'Recovery would overwrite a different original private skin' in source
+    assert 'encryptedRecoveryContainsOriginalPrivateSkinAndRestoresExactBytes' in instrument

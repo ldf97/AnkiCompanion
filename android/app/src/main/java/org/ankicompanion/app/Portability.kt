@@ -5,6 +5,9 @@ import android.net.Uri
 import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.security.MessageDigest
+import java.nio.file.Files
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import javax.crypto.Cipher
@@ -24,6 +27,70 @@ object Portability {
     private const val MAX_BYTES=64*1024*1024
     private const val ITERATIONS=210_000
     private val random=SecureRandom()
+    private const val MAX_SKIN_FILES=2000
+    private const val MAX_SKIN_FILE_BYTES=20*1024*1024
+    private fun digest(data:ByteArray)=MessageDigest.getInstance("SHA-256")
+        .digest(data).joinToString(""){"%02x".format(it)}
+    private fun safeRelative(path:String):Boolean = path.isNotEmpty() && path.length<=240 &&
+        !path.startsWith("/") && !path.contains('\\') && !path.contains('\u0000') &&
+        path.split('/').all{it.isNotEmpty() && it!="." && it!=".."}
+
+    /** Include the original private skin bytes in encrypted exceptional recovery. */
+    private fun exportPrivateSkins(context:Context):JSONArray {
+        val base=File(context.filesDir,"packs").canonicalFile
+        val entries=JSONArray()
+        if(!base.isDirectory)return entries
+        var total=0L
+        for(file in base.walkTopDown()) {
+            require(!Files.isSymbolicLink(file.toPath())){"Refusing symlinked skin data"}
+            if(!file.isFile)continue
+            val canonical=file.canonicalFile
+            require(canonical.path.startsWith(base.path+File.separator)){"Skin file leaves private storage"}
+            val relative=canonical.relativeTo(base).invariantSeparatorsPath
+            require(safeRelative(relative)){"Unsupported private skin path"}
+            require(entries.length()<MAX_SKIN_FILES){"Too many private skin files"}
+            require(file.length()<=MAX_SKIN_FILE_BYTES){"Private skin file exceeds recovery limit"}
+            val bytes=file.readBytes();total+=bytes.size
+            require(total<=MAX_BYTES/2){"Private skins exceed encrypted recovery limit"}
+            entries.put(JSONObject().put("path",relative).put("data",b64(bytes)).put("sha256",digest(bytes)))
+        }
+        return entries
+    }
+
+    private fun verifiedPrivateSkins(context:Context,content:JSONObject):List<Pair<File,ByteArray>> {
+        val entries=content.optJSONArray("private_skin_files") ?: return emptyList() // older backups
+        require(entries.length()<=MAX_SKIN_FILES){"Too many private skin files"}
+        val base=File(context.filesDir,"packs").canonicalFile
+        val restored=mutableListOf<Pair<File,ByteArray>>()
+        val seen=mutableSetOf<String>()
+        var total=0L
+        for(i in 0 until entries.length()) {
+            val item=entries.getJSONObject(i);val relative=item.getString("path")
+            require(safeRelative(relative) && seen.add(relative)){"Duplicate or unsafe private skin path"}
+            val file=File(base,relative).canonicalFile
+            require(file.path.startsWith(base.path+File.separator)){"Skin recovery path escapes private storage"}
+            val bytes=unb64(item.getString("data"));total+=bytes.size
+            require(bytes.size<=MAX_SKIN_FILE_BYTES && total<=MAX_BYTES/2){"Skin recovery exceeds size limit"}
+            require(digest(bytes)==item.getString("sha256")){"Private skin checksum mismatch"}
+            require(!file.exists() || file.readBytes().contentEquals(bytes)){
+                "Recovery would overwrite a different original private skin"}
+            restored.add(file to bytes)
+        }
+        return restored
+    }
+
+    private fun restorePrivateSkins(files:List<Pair<File,ByteArray>>) {
+        for((file,bytes) in files) {
+            if(file.exists())continue // byte-identical original already present
+            require(file.parentFile!!.mkdirs() || file.parentFile!!.isDirectory){"Cannot create skin directory"}
+            val temp=File.createTempFile("recovery-", ".partial", file.parentFile)
+            try {
+                temp.writeBytes(bytes)
+                check(temp.renameTo(file)){"Could not restore original private skin"}
+            } finally {temp.delete()}
+        }
+    }
+
     private fun b64(value:ByteArray)=Base64.encodeToString(value,Base64.NO_WRAP)
     private fun unb64(value:String)=Base64.decode(value,Base64.NO_WRAP)
     private fun derivedKey(passphrase:String,salt:ByteArray):SecretKeySpec {
@@ -46,6 +113,7 @@ object Portability {
         for(name in listOf("state.json","commands.json","update.json","ankidroid-update.json"))
             content.put(name,storage.load(name) ?: JSONObject.NULL)
         Outbox(context).use{content.put("outbox",it.exportTransfer())}
+        content.put("private_skin_files",exportPrivateSkins(context))
         val plaintext=content.toString().toByteArray(StandardCharsets.UTF_8)
         require(plaintext.size<=MAX_BYTES){"Recovery data exceeds safe transfer size"}
         val salt=ByteArray(16).also{random.nextBytes(it)}
@@ -76,6 +144,8 @@ object Portability {
         require(content.getInt("schema")==1){"Unsupported recovery version"}
         val entries=content.getJSONArray("outbox")
         require(entries.length()<=250_000){"Recovery contains too many review records"}
+        // Validate every private file BEFORE altering settings or offline outbox.
+        val skins=verifiedPrivateSkins(context,content)
         val storage=Storage(context)
         val currentConnection=storage.connection()
         val restoredConnection=content.optJSONObject("connection")
@@ -93,6 +163,7 @@ object Portability {
         for(name in listOf("state.json","commands.json","update.json","ankidroid-update.json"))
             content.optJSONObject(name)?.let{storage.save(name,it)}
         if(restoredConnection!=null)storage.saveConnection(restoredConnection)
+        restorePrivateSkins(skins)
         return entries.length()
     }
     fun exportToUri(context:Context,uri:Uri,passphrase:String) {
