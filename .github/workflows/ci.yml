@@ -68,7 +68,7 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: requirements-*.txt
-      - run: pip install -r requirements-desktop.txt -r requirements-test.txt pyinstaller aqt==26.9.3
+      - run: pip install -r requirements-desktop.txt -r requirements-test.txt pyinstaller
       - run: python scripts/check_tray.py
       - name: Launch real Anki 26.9.3 with AnkiCompanion on isolated Windows 11 x64 profile
         shell: pwsh
@@ -77,7 +77,13 @@ jobs:
           QT_OPENGL: software
           QSG_RHI_BACKEND: software
           QTWEBENGINE_DISABLE_SANDBOX: '1'
-        run: python scripts/ci_windows_anki_launcher.py
+        run: |
+          # Anki uses PyQt6/QtWebEngine. The companion UI uses PySide6.
+          # Their packaged Qt DLLs must never be mixed in one Python process.
+          python -m venv "$env:RUNNER_TEMP/aqt-isolated"
+          & "$env:RUNNER_TEMP/aqt-isolated/Scripts/python.exe" -m pip install --disable-pip-version-check aqt==26.9.3
+          & "$env:RUNNER_TEMP/aqt-isolated/Scripts/python.exe" scripts/ci_windows_anki_launcher.py
+          if ($LASTEXITCODE -ne 0) { throw 'Real Anki launcher smoke failed' }
       - shell: pwsh
         run: ./scripts/build_windows.ps1
       - shell: pwsh
