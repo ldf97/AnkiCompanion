@@ -364,12 +364,15 @@ class Window(QMainWindow):
                         payload=dict(self.current['settings'],update_repository=repository.strip())
                         self.launch(lambda:self.client().request('/v1/settings','PUT',payload),lambda _:self.check_updates(True))
                 return
-            self.update_button.setText(('Update to '+release['version']) if release.get('available') else ('Up to date · '+updates.version()['version']))
+            self.update_button.setText(('Update Windows bundle to '+release['version']) if release.get('available') else ('Windows bundle up to date · '+updates.version()['version']))
             if release.get('available'):
                 if not interactive:
                     if self.tray.isVisible():self.tray.showMessage('Anki Companion update','Version '+release['version']+' is ready. Open the app and click Update.')
                     return
+                components=updates.component_update_summary(
+                    release,remote_server=first_run.has_remote_connection(self.config))
                 text=release.get('notes','')[:1500]+'\n\nSource commit: '+release.get('commit','')
+                text+='\n\nComponent updates:\n'+components
                 if QMessageBox.question(self,'Update to '+release['version'],text+'\n\nDownload and update?')==QMessageBox.StandardButton.Yes:
                     def ready(path):
                         try:updates.install(path,release);self.quit_app()

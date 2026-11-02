@@ -23,6 +23,7 @@ class MainActivity:Activity() {
     private lateinit var parent:Spinner
     private lateinit var mode:Spinner
     private lateinit var updateButton:Button
+    private lateinit var ankidroidUpdateButton:Button
     private var state:JSONObject?=null
     private var decks=listOf<JSONObject>()
     private var renderedKey=""
@@ -51,7 +52,7 @@ class MainActivity:Activity() {
         val actions=LinearLayout(this);actions.addView(button("Anki access"){requestAnki()});actions.addView(button("Refresh"){refresh()});actions.addView(button("Sync AnkiDroid"){try{AnkiBridge.nativeSync(this)}catch(e:Exception){status.text=e.message}});box.addView(actions)
         val settings=LinearLayout(this);settings.addView(button("Lesson & day"){goals()});settings.addView(button("Skins"){skins()});box.addView(settings)
         updateButton=button("Updates · "+BuildConfig.VERSION_NAME){updates()};box.addView(updateButton)
-        box.addView(button("AnkiDroid Companion updates"){ankidroidUpdates()})
+        ankidroidUpdateButton=button("AnkiDroid Companion updates"){ankidroidUpdates()};box.addView(ankidroidUpdateButton)
         box.addView(button("Update signing diagnostics"){signingDiagnostics()})
         box.addView(button("Portable recovery · incompatible signing only"){recoveryMenu()})
         box.addView(button("Live widget updates"){LiveSyncService.start(this)})
@@ -146,7 +147,11 @@ class MainActivity:Activity() {
             val index=decks.indexOfFirst{it.getString("id")==value.getJSONObject("settings").getString("parent_deck_id")};if(index>=0)parent.setSelection(index)
         } else decks=latest
         if(first)mode.setSelection(if(value.getJSONObject("settings").getString("clearance")=="new_only")0 else 1)
-        val update=storage.load("update.json");updateButton.text=if(update?.optBoolean("available")==true)"Update to "+update.optString("version") else "Updates · "+BuildConfig.VERSION_NAME
+        val update=storage.load("update.json");updateButton.text=if(update?.optBoolean("available")==true)"Update Android Companion to "+update.optString("version") else "Android Companion updates · "+BuildConfig.VERSION_NAME
+        val ankidroidUpdate=storage.load("ankidroid-update.json")
+        ankidroidUpdateButton.text=if(ankidroidUpdate?.optBoolean("available")==true)
+            "Update AnkiDroid Companion to "+ankidroidUpdate.optString("version")
+            else "AnkiDroid Companion updates · check separately"
     }
     private fun connect() {
         val old=storage.connection() ?: JSONObject();val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(20),0,dp(20),0)}

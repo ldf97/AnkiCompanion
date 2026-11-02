@@ -199,6 +199,10 @@ jobs:
           try {
             $thumbprint=if ($cert) { $cert.Thumbprint } else { '' }
             @{version=$env:RELEASE_VERSION;build=[int]$env:RELEASE_BUILD;commit=$env:GITHUB_SHA;windows_signer_thumbprint=$thumbprint} | ConvertTo-Json | Set-Content VERSION.json -Encoding utf8NoBOM
+            # The Anki add-on is inside this same Windows installer; make
+            # its own manifest match the signed bundle release version.
+            python scripts/stamp_component_versions.py --version $env:RELEASE_VERSION
+            if ($LASTEXITCODE -ne 0) { throw 'Anki add-on version stamping failed' }
             ./scripts/build_windows.ps1
             if ($cert) {
               $result=Set-AuthenticodeSignature -FilePath packages/AnkiCompanion-Windows-Setup.exe -Certificate $cert -HashAlgorithm SHA256 -TimestampServer http://timestamp.digicert.com
@@ -322,4 +326,3 @@ jobs:
           }
           assets+=(candidate/AnkiCompanion-Android.apk candidate/AnkiDroid-Companion-Android.apk)
           gh release create "$tag" "${assets[@]}" --target "$GITHUB_SHA" --title "AnkiCompanion $tag" --notes "GitHub checksum-verified Windows update. Android in-place updates are included when a persistent Android release signing key is configured." --latest
-

@@ -31,11 +31,39 @@ def github_release(platform='windows'):
     if not 0<item.get('size',0)<=500*1024*1024:raise ValueError('Invalid signed update size')
     current=tuple(int(x) for x in installed['version'].split('.'))
     newer=tuple(int(x) for x in manifest['version'].split('.'))>current
+    components=manifest.get('components') or {
+        key:{'version':manifest['version'],'asset':'windows'}
+        for key in ('windows_desktop','local_server','anki_desktop_addon')}
+    # Enforce that a component is never advertised without its packaged asset.
+    if not isinstance(components,dict) or any(
+        not isinstance(spec,dict) or spec.get('asset') not in manifest['assets']
+        for spec in components.values()):
+        raise ValueError('Release components do not match signed assets')
     return dict(configured=True,available=newer,version=manifest['version'],
         build=manifest['build'],commit=manifest['commit'],notes='GitHub signed release',
-        filename=name,size=item['size'],sha256=item['sha256'],
+        filename=name,size=item['size'],sha256=item['sha256'],components=components,
         download_url=PUBLIC_RELEASES+name,
         message='Update available' if newer else 'Up to date')
+
+
+def component_update_summary(release,remote_server=False):
+    '''Show precisely what the Windows Update control can/cannot replace.'''
+    components=release.get('components') or {}
+    bundled=('windows_desktop','local_server','anki_desktop_addon')
+    labels=dict(windows_desktop='Windows desktop',local_server='Local server',
+                anki_desktop_addon='Anki desktop add-on',
+                android_companion='Android Companion',
+                ankidroid_companion='AnkiDroid Companion')
+    lines=[]
+    for key in bundled:
+        if key=='local_server' and remote_server:
+            lines.append('Hosted server: updated through Google Cloud deployment, not Windows installer')
+        elif key in components or not components:
+            lines.append(labels[key]+': included in Windows installer')
+    for key in ('android_companion','ankidroid_companion'):
+        if key in components:
+            lines.append(labels[key]+': separate signed update on the phone')
+    return '\n'.join(lines)
 
 
 def download(client,release,directory):
@@ -123,4 +151,3 @@ def install(package, release=None):
     # Windows may still ask for an installer/security confirmation. No shell is
     # required, and the normal installer preserves user data across upgrades.
     subprocess.Popen([str(package),'/CURRENTUSER','/RESTARTAPPLICATIONS'],close_fds=True)
-

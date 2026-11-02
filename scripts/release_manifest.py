@@ -18,7 +18,20 @@ def make(directory,version,build,commit):
         raw=path.read_bytes();assets[platform]=dict(filename=name,size=len(raw),sha256=hashlib.sha256(raw).hexdigest())
         if platform=='android': assets[platform]['version_code']=build
         if platform=='ankidroid': assets[platform]['version_code']=220000000+build
-    result=dict(schema_version=1,version=version,build=build,commit=commit,assets=assets)
+    # One release can contain multiple independently installed components.
+    # Desktop, local server and Anki add-on share ONE Windows installer; the
+    # two Android package IDs are independent system-managed updates.
+    components={
+        'windows_desktop':{'version':version,'asset':'windows'},
+        'local_server':{'version':version,'asset':'windows'},
+        'anki_desktop_addon':{'version':version,'asset':'windows'},
+    }
+    if 'android' in assets:
+        components['android_companion']={'version':version,'asset':'android'}
+    if 'ankidroid' in assets:
+        components['ankidroid_companion']={'version':version,'asset':'ankidroid'}
+    result=dict(schema_version=1,version=version,build=build,commit=commit,
+                assets=assets,components=components)
     (directory/'update.json').write_text(json.dumps(result,indent=2))
     return result
 
