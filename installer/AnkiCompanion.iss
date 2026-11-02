@@ -36,4 +36,11 @@ Name: "{userstartup}\AnkiCompanion Server"; Filename: "{app}\server\AnkiCompanio
 [Run]
 Filename: "{app}\server\AnkiCompanionServer.exe"; Description: "Start the companion server"; Flags: nowait postinstall skipifsilent runhidden
 Filename: "{app}\desktop\AnkiCompanion.exe"; Description: "Open AnkiCompanion"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\server\AnkiCompanionServer.exe"; Flags: nowait runhidden; Check: IsAutoUpdate
+Filename: "{app}\desktop\AnkiCompanion.exe"; Flags: nowait; Check: IsAutoUpdate
+[Code]
+function IsAutoUpdate: Boolean;
+begin
+  Result := Pos('/AUTOUPDATE', Uppercase(GetCmdTail)) > 0;
+end;
 ; User data lives outside the installation folder and survives updates/uninstall.

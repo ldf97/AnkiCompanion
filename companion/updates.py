@@ -150,4 +150,6 @@ def install(package, release=None):
     preserve_windows_state_before_update()
     # Windows may still ask for an installer/security confirmation. No shell is
     # required, and the normal installer preserves user data across upgrades.
-    subprocess.Popen([str(package),'/CURRENTUSER','/RESTARTAPPLICATIONS'],close_fds=True)
+    subprocess.Popen([str(package),'/CURRENTUSER','/VERYSILENT','/SUPPRESSMSGBOXES',
+                      '/NORESTART','/CLOSEAPPLICATIONS','/RESTARTAPPLICATIONS',
+                      '/AUTOUPDATE'],close_fds=True)

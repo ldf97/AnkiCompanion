@@ -90,15 +90,22 @@ jobs:
         run: |
           $installer=Start-Process packages/AnkiCompanion-Windows-Setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=installer-smoke.log' -Wait -PassThru
           if ($installer.ExitCode -ne 0) { throw "Installer failed: $($installer.ExitCode)" }
-          $server=Start-Process "$env:LOCALAPPDATA/Programs/AnkiCompanion/server/AnkiCompanionServer.exe" -PassThru -RedirectStandardOutput server-smoke.log -RedirectStandardError server-smoke-error.log
+          # Reserve AnkiConnect's actual port: the Companion server must still start.
+          $ankiConnectPort=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,8765)
+          $ankiConnectPort.Start()
+          $server=$null
           try {
+            $server=Start-Process "$env:LOCALAPPDATA/Programs/AnkiCompanion/server/AnkiCompanionServer.exe" -PassThru -RedirectStandardOutput server-smoke.log -RedirectStandardError server-smoke-error.log
             $healthy=$false
             for ($i=0; $i -lt 30; $i++) {
-              try { if ((Invoke-RestMethod http://127.0.0.1:8765/health).status -eq 'ok') { $healthy=$true; break } } catch {}
+              try { if ((Invoke-RestMethod http://127.0.0.1:8766/health).status -eq 'ok') { $healthy=$true; break } } catch {}
               Start-Sleep -Seconds 1
             }
             if (-not $healthy) { throw 'Installed server did not become healthy' }
-          } finally { Stop-Process -Id $server.Id -ErrorAction SilentlyContinue }
+          } finally {
+            if ($server) { Stop-Process -Id $server.Id -ErrorAction SilentlyContinue }
+            $ankiConnectPort.Stop()
+          }
           # Repeat a normal Windows installer update WITHOUT uninstalling.
           # Real server data lives under LOCALAPPDATA, outside the code folder.
           Start-Sleep -Seconds 2

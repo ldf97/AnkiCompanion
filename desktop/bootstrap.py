@@ -17,11 +17,11 @@ import tempfile
 import time
 
 from companion.transport import Client
+from companion.ports import LOCAL_URL, migrate_local_url
 
 EREN_SHA256 = "7c25d1434b9971ea89193be60a665b18c0a5ed9be66fa4f92c36c94752dce412"
 CLOUDFLARED_SHA256 = "547057326266f0e1c7d50d102dbd22ff283d740c055bd61e94f10e2c606f89af"
 PAIRING_HOST = re.compile(r"^https://[a-z0-9-]+\.trycloudflare\.com$")
-LOCAL_URL = "http://127.0.0.1:8765"
 
 def has_remote_connection(config):
     """Keep an explicitly configured remote connection on Windows restarts.
@@ -76,9 +76,52 @@ def _healthy(url=LOCAL_URL, timeout=1.5):
         return False
 
 
+def retire_legacy_windows_server():
+    """Retire only our authenticated *old* process, never AnkiConnect or unrelated PIDs.
+
+    An existing 8765 listener is not evidence of our process: AnkiConnect uses
+    that port. Require companion API authentication with this installation's
+    token and an executable-path match before Windows terminates anything.
+    This is invoked by the app's repair/startup flow, not the user's shell.
+    """
+    if sys.platform != 'win32':
+        return False
+    token_path = data_dir() / 'token.txt'
+    if not token_path.is_file():
+        return False
+    token = token_path.read_text(encoding='utf-8').strip()
+    if len(token) < 16:
+        return False
+    try:
+        Client('http://127.0.0.1:8765', token).request('/v1/state')
+    except Exception:
+        return False  # AnkiConnect or no old companion server
+    exe = server_executable().resolve()
+    if not exe.is_file():
+        raise RuntimeError('An old Companion server is using AnkiConnect port 8765, but its installed executable cannot be located')
+    script = ("$p=[IO.Path]::GetFullPath($env:ANKICOMPANION_SERVER_BIN); "
+              "$found=@(Get-CimInstance Win32_Process -Filter \"Name='AnkiCompanionServer.exe'\" | "
+              "Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -ieq $p }); "
+              "if ($found.Count -ne 1) { exit 3 }; "
+              "$found | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop }")
+    result = subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',script],
+                            env={**os.environ,'ANKICOMPANION_SERVER_BIN':str(exe)},
+                            capture_output=True,text=True,timeout=20)
+    if result.returncode != 0:
+        raise RuntimeError('The old AnkiCompanion server still occupies AnkiConnect port 8765; use Repair Setup after closing the old server')
+    for _ in range(20):
+        try:
+            Client('http://127.0.0.1:8765',token).request('/v1/state')
+        except Exception:
+            return True
+        time.sleep(0.2)
+    raise RuntimeError('The old companion server has not released port 8765')
+
+
 def ensure_server():
     """Start packaged server when it is missing, keeping the same token/data."""
     home = data_dir()
+    retire_legacy_windows_server()
     if not _healthy():
         executable = server_executable()
         if not executable.is_file():
@@ -221,9 +264,37 @@ def ensure_anki_bridge():
             if info.is_file() and json.loads(info.read_text(encoding='utf-8')).get('package')=='anki_companion_bridge':
                 target=candidate;break
         except (OSError,ValueError):pass
+    target.mkdir(exist_ok=True)
+    # Do not overwrite the user's saved pairing token, deck preferences, or
+    # manual settings with a bundled default on each automatic repair.
+    configured = target/'config.json'
+    if configured.is_file():
+        try:
+            existing=json.loads(configured.read_text(encoding='utf-8'))
+            if isinstance(existing,dict):
+                existing['server_url']=migrate_local_url(existing.get('server_url'))
+                files['config.json']=json.dumps(existing,indent=2).encode('utf-8')
+        except (OSError,ValueError):
+            pass
+    # Anki persists overrides in meta.json, independently of config.json.
+    # Migrate ONLY the legacy loopback URL, retaining every other preference.
+    meta=target/'meta.json'
+    if meta.is_file():
+        try:
+            saved=json.loads(meta.read_text(encoding='utf-8'))
+            config=saved.get('config') if isinstance(saved,dict) else None
+            if isinstance(config,dict):
+                old_url=config.get('server_url')
+                new_url=migrate_local_url(old_url)
+                if old_url!=new_url:
+                    config['server_url']=new_url
+                    temp=meta.with_suffix('.json.new')
+                    temp.write_text(json.dumps(saved,indent=2),encoding='utf-8')
+                    temp.replace(meta)
+        except (OSError,ValueError):
+            pass
     if all((target/n).is_file() and (target/n).read_bytes()==b for n,b in files.items()):
         return 'Anki desktop bridge installed'
-    target.mkdir(exist_ok=True)
     # Individual atomic replacement means Anki never imports a half-written
     # Python source file. Existing meta.json/config persists across updates.
     for name, contents in files.items():
