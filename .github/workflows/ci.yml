@@ -157,7 +157,7 @@ jobs:
           path: ankidroid-upstream
       - uses: actions/setup-java@v4
         with:
-          distribution: jetbrains
+          distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - name: Apply reviewed companion overlay

@@ -11,13 +11,15 @@ from .backup import snapshot_server
 def prepare_hosted_start():
     data = Path(os.environ.get("ANKI_COMPANION_DATA", "/data"))
     backups = Path(os.environ.get("ANKI_COMPANION_BACKUPS", "/backups"))
-    if os.environ.get("RAILWAY_ENVIRONMENT"):
+    if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("ANKI_COMPANION_REQUIRE_PERSISTENT") == "1":
         # A cloud instance must fail closed without BOTH persistent volumes.
         # The SQLite/skin data and its backups must never land in an ephemeral
         # image overlay where replacing the container erases the history.
         for path in (data, backups):
             if not path.is_mount():
-                raise RuntimeError(f"Refusing Railway startup: no persistent mount at {path}")
+                raise RuntimeError(f"Refusing hosted startup: no persistent mount at {path}")
+    if os.environ.get("ANKI_COMPANION_REQUIRE_MIGRATION") == "1" and not (data / "companion.sqlite3").is_file():
+        raise RuntimeError("Refusing to initialize an empty hosted server: migrate the existing Windows database, pairing token and private skin packs first")
     if (data / "companion.sqlite3").is_file():
         if not backups.is_dir():
             raise RuntimeError("Refusing server update without the persistent backups volume")

@@ -15,6 +15,9 @@ services:
       - /tmp:size=64m,mode=1777
     environment:
       ANKI_COMPANION_DATA: /data
+      ANKI_COMPANION_BACKUPS: /backups
+      ANKI_COMPANION_REQUIRE_PERSISTENT: "1"
+      ANKI_COMPANION_REQUIRE_MIGRATION: ${ANKI_COMPANION_REQUIRE_MIGRATION:-0}
       ANKI_COMPANION_SKIN: study_companion
     volumes:
       - ankicompanion_data:/data:rw

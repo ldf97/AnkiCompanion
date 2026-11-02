@@ -118,3 +118,26 @@ def test_railway_definition_has_two_persistent_volumes_and_one_replica():
     assert "server.launch" in source
     docker=(ROOT/"server/Dockerfile").read_text()
     assert 'server.launch' in docker
+
+def test_hosted_launcher_refuses_missing_volumes_and_unsafe_blank_migration(tmp_path,monkeypatch):
+    import pytest
+    from server.launch import prepare_hosted_start
+    data=tmp_path/"data";data.mkdir()
+    backups=tmp_path/"backups";backups.mkdir()
+    monkeypatch.setenv("ANKI_COMPANION_DATA",str(data))
+    monkeypatch.setenv("ANKI_COMPANION_BACKUPS",str(backups))
+    monkeypatch.setenv("ANKI_COMPANION_REQUIRE_MIGRATION","1")
+    with pytest.raises(RuntimeError,match="migrate"):
+        prepare_hosted_start()
+    monkeypatch.delenv("ANKI_COMPANION_REQUIRE_MIGRATION")
+    assert prepare_hosted_start() is None
+    monkeypatch.setenv("ANKI_COMPANION_REQUIRE_PERSISTENT","1")
+    with pytest.raises(RuntimeError,match="persistent mount"):
+        prepare_hosted_start()
+
+
+def test_ankidroid_ci_uses_non_rate_limited_temurin_java_21():
+    for name in ("ci.yml","release-candidate.yml"):
+        flow=(ROOT/".github/workflows"/name).read_text()
+        assert "distribution: jetbrains" not in flow
+        assert "distribution: temurin" in flow
