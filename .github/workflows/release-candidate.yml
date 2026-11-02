@@ -29,7 +29,12 @@ on:
 permissions:
   contents: read
 jobs:
+  # A direct workflow dispatch MUST NOT bypass the full integration suite.
+  # Native Windows/Android/AnkiDroid cross-device CI is run for this exact SHA.
+  verification:
+    uses: ./.github/workflows/ci.yml
   android:
+    needs: [verification]
     if: github.ref == 'refs/heads/main'
     environment: signing
     runs-on: ubuntu-24.04
@@ -52,8 +57,8 @@ jobs:
           APP_VERSION_CODE: ${{ inputs.build }}
         run: |
           if [ -z "$SIGNING_BUNDLE" ] && [ -z "$KEYSTORE_BASE64" ]; then
-            echo "No persistent Android release key configured: Windows-only release."
-            exit 0
+            echo "Missing persistent Android release key: cannot produce a safe full-component release." >&2
+            exit 1
           fi
           export ANDROID_KEYSTORE="$RUNNER_TEMP/release.jks"
           if [ -n "$SIGNING_BUNDLE" ]; then
@@ -89,9 +94,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: signed-android
-          if-no-files-found: ignore
+          if-no-files-found: error
           path: candidate/
   ankidroid:
+    needs: [verification]
     if: github.ref == 'refs/heads/main'
     environment: signing
     runs-on: ubuntu-24.04
@@ -119,8 +125,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$SIGNING_BUNDLE" ] && [ -z "$KEYSTORE_BASE64" ]; then
-            echo 'No persistent Android release key; cannot produce AnkiDroid production update'
-            exit 0
+            echo 'Missing persistent Android signing key for AnkiDroid production update' >&2
+            exit 1
           fi
           export KEYSTOREPATH="$RUNNER_TEMP/ankidroid-release.jks"
           if [ -n "$SIGNING_BUNDLE" ]; then
@@ -161,9 +167,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: signed-ankidroid
-          if-no-files-found: ignore
+          if-no-files-found: error
           path: candidate/AnkiDroid-Companion-Android.apk
   windows:
+    needs: [verification]
     if: github.ref == 'refs/heads/main'
     environment: signing
     runs-on: windows-latest
@@ -263,11 +270,12 @@ jobs:
           name: signed-android-upgrade-evidence
           path: test-results/signed-upgrade/
   publish:
-    if: inputs.publish
-    needs: [assemble, signed-upgrade]
+    if: inputs.publish && github.ref == 'refs/heads/main'
+    needs: [verification, assemble, signed-upgrade]
     permissions:
       contents: write
     runs-on: ubuntu-24.04
+    environment: production-release
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -286,7 +294,7 @@ jobs:
           assert manifest['version'] == os.environ['EXPECTED_VERSION']
           assert manifest['build'] == int(os.environ['EXPECTED_BUILD'])
           assert manifest['commit'] == os.environ['EXPECTED_COMMIT']
-          assert {'windows', 'source'}.issubset(manifest['assets'])
+          assert {'windows', 'source', 'android', 'ankidroid'} == set(manifest['assets']), 'Full-component release requires all signed Android assets'
           assert set(manifest['assets']).issubset({'android','ankidroid','windows','source'})
           assert ('android' in manifest['assets']) == ('ankidroid' in manifest['assets']), 'Both Android packages must be signed together'
           for platform, item in manifest['assets'].items():
@@ -308,11 +316,10 @@ jobs:
             exit 1
           fi
           assets=(candidate/AnkiCompanion-Windows-Setup.exe candidate/AnkiCompanion-source.zip candidate/update.json)
-          if [ -f candidate/AnkiCompanion-Android.apk ] && [ -f candidate/AnkiDroid-Companion-Android.apk ]; then
-            assets+=(candidate/AnkiCompanion-Android.apk candidate/AnkiDroid-Companion-Android.apk)
-          elif [ -f candidate/AnkiCompanion-Android.apk ] || [ -f candidate/AnkiDroid-Companion-Android.apk ]; then
-            echo 'Android release requires both production-signed APKs' >&2
+          test -s candidate/AnkiCompanion-Android.apk && test -s candidate/AnkiDroid-Companion-Android.apk || {
+            echo 'Refusing partial release without both production-signed Android APKs' >&2
             exit 1
-          fi
+          }
+          assets+=(candidate/AnkiCompanion-Android.apk candidate/AnkiDroid-Companion-Android.apk)
           gh release create "$tag" "${assets[@]}" --target "$GITHUB_SHA" --title "AnkiCompanion $tag" --notes "GitHub checksum-verified Windows update. Android in-place updates are included when a persistent Android release signing key is configured." --latest
 

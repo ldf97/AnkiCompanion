@@ -53,3 +53,19 @@ def test_normal_android_update_uses_atomic_file_and_committed_preferences():
     assert 'editor.commit()' in portable
     gate=(ROOT/'scripts/check_signed_android_upgrade.sh').read_text()
     assert "exit 1" in gate.split("No production-signed Android candidate")[0] or "exit 1" in gate.split("Required production-signed Android packages are missing")[1].split("fi",1)[0]
+
+
+def test_full_release_requires_same_sha_ci_signing_and_explicit_promotion():
+    workflow=(ROOT/'.github/workflows/release-candidate.yml').read_text()
+    automatic=(ROOT/'.github/workflows/auto-release.yml').read_text()
+    assert 'verification:\n    uses: ./.github/workflows/ci.yml' in workflow
+    assert workflow.count('needs: [verification]')>=3
+    assert 'needs: [verification, assemble, signed-upgrade]' in workflow
+    assert "{'windows', 'source', 'android', 'ankidroid'} == set(manifest['assets'])" in workflow
+    assert 'environment: production-release' in workflow
+    assert 'exit 1' in workflow.split('Missing persistent Android release key:')[1].split('fi',1)[0]
+    assert 'exit 1' in workflow.split('Missing persistent Android signing key')[1].split('fi',1)[0]
+    assert 'if: inputs.publish && github.ref' in workflow
+    assert 'publish: false' in automatic
+    assert 'publish: true' not in automatic
+    assert 'schedule:' not in automatic
