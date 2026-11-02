@@ -241,3 +241,28 @@ def test_large_review_history_pages_without_duplicate_answers(client):
         cursor=result['next_cursor']
     assert len(seen)==3000
     assert client.get('/v1/state').json()['progress']['answers']==3000
+
+
+def test_shared_revision_is_identical_on_two_devices_and_changes_only_with_confirmed_state(client):
+    first=client.get('/v1/state?device_id=laptop').json()
+    second=client.get('/v1/state?device_id=phone').json()
+    assert first['shared_revision']==second['shared_revision']
+    assert len(first['shared_revision'])==64
+    assert client.post('/v1/events',json={'device_id':'phone','events':[event()]}).status_code==200
+    changed=client.get('/v1/state?device_id=laptop').json()
+    assert changed['shared_revision'] != first['shared_revision']
+    assert changed['shared_revision']==client.get('/v1/state?device_id=phone').json()['shared_revision']
+    assert client.post('/v1/events',json={'device_id':'phone','events':[event()]}).status_code==200
+    assert changed['shared_revision']==client.get('/v1/state').json()['shared_revision']
+    assert client.get('/v1/state').json()['progress']['answers']==1
+
+
+def test_shared_revision_is_not_a_native_sync_receipt_or_wall_clock(tmp_path):
+    from companion.consistency import shared_revision
+    a={'date':'2026-11-02','settings':{},'policy':{},'lineup':{},'seed':'seed',
+       'completed':False,'streak':0,'progress':{'answers':12},'today_events':[],
+       'week':[], 'devices':[{'device_id':'phone'}], 'server_time_ms':20}
+    b=dict(a,devices=[{'device_id':'laptop'}],server_time_ms=99999999)
+    assert shared_revision(a)==shared_revision(b)
+    b['progress']={'answers':13}
+    assert shared_revision(a)!=shared_revision(b)

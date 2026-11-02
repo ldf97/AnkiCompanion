@@ -225,6 +225,8 @@ class Window(QMainWindow):
                 status+=f' · {label}: Anki sync confirmed {applied}/{revision}'
             else:
                 status+=f' · {label}: Anki sync not yet verified'
+        if value.get('shared_revision'):
+            status+=' · confirmed state '+value['shared_revision'][:8]
         self.status.setText(status)
         p=value['progress'];g=value['policy'];ratio=min(p['answers']/g['lesson_answers'],p['duration_ms']/g['lesson_ms'] if g['lesson_ms'] else 1)
         self.progress.setValue(min(100,int(ratio*100)))

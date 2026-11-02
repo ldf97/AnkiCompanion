@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from pathlib import Path
 import sqlite3, json, secrets, time, threading
 from companion.rules import study_day, daily_lineup, lesson_progress
+from companion.consistency import shared_revision
 from .models import Settings
 
 class Conflict(ValueError): pass
@@ -269,10 +270,14 @@ class Store:
             today_events = [dict(id=r['id'], duration_ms=r['duration_ms']) for r in
                 db.execute('SELECT id,duration_ms FROM events WHERE day=? AND retracted=0', (today,))]
             progress=lesson_progress(**totals.get(today,dict(answers=0,duration_ms=0)),policy=policy)
-            return dict(server_time_ms=now_ms, date=today, settings=settings, policy=policy,
-                        lineup=lineup, seed=db.execute("SELECT value FROM meta WHERE key='seed'").fetchone()[0],
-                        completed=done, streak=streak, progress=progress,
-                        today_events=today_events, devices=devices, week=history)
+            state = dict(server_time_ms=now_ms, date=today, settings=settings, policy=policy,
+                         lineup=lineup, seed=db.execute("SELECT value FROM meta WHERE key='seed'").fetchone()[0],
+                         completed=done, streak=streak, progress=progress,
+                         today_events=today_events, devices=devices, week=history)
+            # A single server-confirmed version for all devices, unaffected by
+            # polling time, one device's liveness, or native sync receipts.
+            state['shared_revision'] = shared_revision(state)
+            return state
 
     def enqueue(self, command, now_ms):
         identity = secrets.token_hex(12)

@@ -89,7 +89,8 @@ class MainActivity:Activity() {
         status.text=if(error.isEmpty())"Connected · "+value.getString("date") else "Offline · cached progress · "+value.getString("date")
         status.append(" · updated ${(System.currentTimeMillis()-value.getLong("server_time_ms"))/1000}s ago")
         val localPending=value.optInt("locally_pending",0)
-        if(localPending>0)status.append(" · $localPending answer(s) awaiting server acknowledgement")
+        value.optString("shared_revision").takeIf{it.length>=8}?.let {status.append(" · confirmed state "+it.take(8))}
+        if(localPending>0)status.append(" · $localPending provisional answer(s) awaiting server acknowledgement")
         val native=value.optJSONObject("native_sync")
         if(native!=null) {
             val revision=native.optLong("revision",0)
