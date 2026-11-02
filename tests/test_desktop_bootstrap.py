@@ -101,3 +101,34 @@ def test_first_eren_import_preserves_already_selected_custom_skin(monkeypatch):
     assert "selected skin preserved" in setup.recover_eren(Client())
     assert writes == []
     assert selected["skin_id"] == "new_custom"
+
+def test_hosted_connection_survives_windows_startup_without_local_bootstrap():
+    from urllib.parse import urlsplit, parse_qs
+    remote={"url":"https://companion.example.net","token":"secret-12345678901234567890",
+            "allow_lan_http":False}
+    assert setup.has_remote_connection(remote)
+    link=setup.remote_pairing_link(remote)
+    assert urlsplit(link).hostname=="companion.example.net"
+    assert parse_qs(urlsplit(link).query)["token"]==[remote["token"]]
+    assert not setup.has_remote_connection(dict(remote,url="http://companion.example.net"))
+    assert not setup.has_remote_connection(dict(remote,url="http://127.0.0.1:8765"))
+    assert not setup.has_remote_connection(dict(remote,url="https://companion.example.net?override=1"))
+    assert not setup.has_remote_connection(dict(remote,token=""))
+    # GUI bootstrap must consult this guard BEFORE starting the local server.
+    source=(__import__("pathlib").Path(__file__).resolve().parents[1]/"desktop/app.py").read_text()
+    method=source.split("    def bootstrap_local(self):",1)[1].split("    def client(self):",1)[0]
+    assert "if first_run.has_remote_connection(self.config):" in method
+    assert method.index("if first_run.has_remote_connection(self.config):") < method.index("first_run.bootstrap")
+    assert "Using saved always-on companion server" in method
+    assert "remote_pairing_link(self.config)" in source
+
+
+def test_pairing_requires_https_and_preserves_existing_hosted_endpoint():
+    config={"url":"https://my-host.example.org","token":"0123456789abcdef","allow_lan_http":False}
+    assert setup.remote_pairing_link(config).startswith("https://my-host.example.org?token=")
+    config["url"]="http://192.168.1.3:8765"
+    config["allow_lan_http"]=True
+    assert setup.has_remote_connection(config)
+    import pytest
+    with pytest.raises(ValueError,match="HTTPS"):
+        setup.remote_pairing_link(config)

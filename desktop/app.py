@@ -146,7 +146,13 @@ class Window(QMainWindow):
                 QTimer.singleShot(0,self.refresh)
 
     def bootstrap_local(self):
-        """Self-repair in an ordinary background app worker; no user commands."""
+        """Self-repair without overwriting a saved hosted connection."""
+        if first_run.has_remote_connection(self.config):
+            self.status.setText('Using saved always-on companion server')
+            # The add-on can self-repair independently of a local API process.
+            self.launch(first_run.ensure_anki_bridge,lambda _:self.refresh())
+            self.refresh()
+            return
         if getattr(self,'_bootstrapping',False):return
         self._bootstrapping=True
         self.status.setText('Connecting to your local AnkiCompanion server…')
@@ -241,6 +247,15 @@ class Window(QMainWindow):
         if int(time.time()*1000)-device['updated_ms']>120000:self.status.setText('Study device is offline. Open Anki on that device and refresh.');return
         self.launch(lambda:self.client().request('/v1/commands','POST',dict(device_id=identity,action='study',deck_id=deck['id'])),lambda _:self.status.setText('Study request sent to '+device['label']))
     def show_pairing(self):
+        if first_run.has_remote_connection(self.config):
+            try:
+                link=first_run.remote_pairing_link(self.config)
+            except ValueError as exc:
+                QMessageBox.warning(self,'Pair phone',str(exc));return
+            QApplication.clipboard().setText(link)
+            QMessageBox.information(self,'Pair phone',
+                'Hosted HTTPS pairing link copied. Paste it into Connection on the phone. Your Windows PC can be turned off.')
+            return
         # Works on a standard GitHub-release installation. Provision the relay
         # inside the installed app rather than requiring a separate script.
         if getattr(self,'_pairing_active',False):return

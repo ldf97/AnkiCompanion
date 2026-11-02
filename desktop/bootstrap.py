@@ -23,6 +23,34 @@ CLOUDFLARED_SHA256 = "547057326266f0e1c7d50d102dbd22ff283d740c055bd61e94f10e2c60
 PAIRING_HOST = re.compile(r"^https://[a-z0-9-]+\.trycloudflare\.com$")
 LOCAL_URL = "http://127.0.0.1:8765"
 
+def has_remote_connection(config):
+    """Keep an explicitly configured remote connection on Windows restarts.
+
+    Running a local bootstrap must never replace the saved hosted endpoint,
+    token, or collection preferences. A trusted LAN connection may use HTTP;
+    public remote connections must be HTTPS.
+    """
+    if not isinstance(config, dict) or len(config.get("token") or "") < 16:
+        return False
+    try:
+        url = urlsplit((config.get("url") or "").strip())
+        return (bool(url.hostname)
+                and url.hostname not in ("localhost", "127.0.0.1", "::1")
+                and not (url.username or url.password or url.query or url.fragment)
+                and (url.scheme == "https" or
+                     (url.scheme == "http" and config.get("allow_lan_http") is True)))
+    except (ValueError, TypeError):
+        return False
+
+
+def remote_pairing_link(config):
+    """Produce a phone pairing link from the *saved* always-on HTTPS server."""
+    if not has_remote_connection(config) or urlsplit(config["url"]).scheme != "https":
+        raise ValueError("Remote phone pairing requires a configured HTTPS server")
+    base = config["url"].rstrip("/")
+    return base + "?" + urlencode({"token": config["token"], "collection_id": "primary"})
+
+
 
 def data_dir():
     return Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")) / "AnkiCompanion" / "server"
