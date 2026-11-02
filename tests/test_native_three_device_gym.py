@@ -91,7 +91,8 @@ def test_real_native_three_device_gym_offline_undo(tmp_path):
                 response=companion.post('/v1/snapshots',json=data)
                 assert response.status_code==200,response.text
 
-            companion=TestClient(create_app(tmp_path/'companion','gym-test-bearer-token'))
+            companion=TestClient(create_app(tmp_path/'companion','gym-test-bearer-token'),
+                headers={'Authorization':'Bearer gym-test-bearer-token'})
             settings=companion.get('/v1/settings').json()
             settings.update(lesson_answers=40,lesson_ms=0)
             assert companion.put('/v1/settings',json=settings).status_code==200

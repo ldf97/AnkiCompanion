@@ -10,3 +10,7 @@ Date: 2026-11-02. Base: main `d2c6da1152e979b81013e83bbb4f1d33ed326027` (PR #11)
 - Local actual-HTTP model run: **PASS**, targeted change notification 0.204 seconds, three-device reconnection/reconciliation 0.044 seconds (loopback scheduling model), 41 study attempts and 40 active native reviews before the conflict injection; both concurrent conflicting answers preserved as study attempts, second scheduling edit unacknowledged pending human conflict handling.
 - Local Python tests excluding unavailable native Anki module: **130 passed, 1 skipped** (2026-11-02). CI on exact commit still required before merge.
 - **Unresolved external acceptance:** real-world mobile carrier/Doze, always-online server deployment, actual owner devices. A low-latency local simulated result is *not* a 5-second real native-synchronization guarantee.
+
+## First native CI finding
+
+GitHub run 41511882095 reached the native Python test and failed at HTTP 401 because the new test fixture omitted its own Authorization header; the server correctly refused unauthenticated requests. The source fixture now sends its ephemeral test-only bearer token. This error did not establish a native sync failure; rerun CI on the corrected exact SHA.
