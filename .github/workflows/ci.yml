@@ -82,20 +82,6 @@ jobs:
           cache-dependency-path: requirements-*.txt
       - run: pip install -r requirements-desktop.txt -r requirements-test.txt pyinstaller
       - run: python scripts/check_tray.py
-      - name: Launch real Anki 26.9.3 with AnkiCompanion on isolated Windows 11 x64 profile
-        shell: pwsh
-        env:
-          QT_QPA_PLATFORM: offscreen
-          QT_OPENGL: software
-          QSG_RHI_BACKEND: software
-          QTWEBENGINE_DISABLE_SANDBOX: '1'
-        run: |
-          # Anki uses PyQt6/QtWebEngine. The companion UI uses PySide6.
-          # Their packaged Qt DLLs must never be mixed in one Python process.
-          python -m venv "$env:RUNNER_TEMP/aqt-isolated"
-          & "$env:RUNNER_TEMP/aqt-isolated/Scripts/python.exe" -m pip install --disable-pip-version-check aqt==26.9.3 PyQt6==6.11.0 PyQt6-Qt6==6.11.2 PyQt6-WebEngine==6.11.0 PyQt6-WebEngine-Qt6==6.11.2
-          & "$env:RUNNER_TEMP/aqt-isolated/Scripts/python.exe" scripts/ci_windows_anki_launcher.py
-          if ($LASTEXITCODE -ne 0) { throw 'Real Anki launcher smoke failed' }
       - shell: pwsh
         run: ./scripts/build_windows.ps1
       - shell: pwsh
@@ -111,6 +97,41 @@ jobs:
             }
             if (-not $healthy) { throw 'Installed server did not become healthy' }
           } finally { Stop-Process -Id $server.Id -ErrorAction SilentlyContinue }
+          # Repeat a normal Windows installer update WITHOUT uninstalling.
+          # Real server data lives under LOCALAPPDATA, outside the code folder.
+          Start-Sleep -Seconds 2
+          $data=Join-Path $env:LOCALAPPDATA 'AnkiCompanion\server'
+          $token=Join-Path $data 'token.txt'
+          $db=Join-Path $data 'companion.sqlite3'
+          if (!(Test-Path $token) -or !(Test-Path $db)) { throw 'Server data missing after first installation' }
+          $privateDir=Join-Path $data 'packs\private_ci\1.0.0'
+          New-Item -ItemType Directory -Force -Path $privateDir | Out-Null
+          $artwork=Join-Path $privateDir 'personal-artwork-fixture.bin'
+          [IO.File]::WriteAllBytes($artwork,[byte[]](1,2,3,4,5,6,7,8))
+          $pathList=@($token,$db,$artwork)
+          $before=@($pathList | ForEach-Object { (Get-FileHash $_ -Algorithm SHA256).Hash })
+          $replacement=Start-Process packages/AnkiCompanion-Windows-Setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=installer-repeat.log' -Wait -PassThru
+          if ($replacement.ExitCode -ne 0) { throw "In-place installer upgrade failed: $($replacement.ExitCode)" }
+          $after=@($pathList | ForEach-Object { (Get-FileHash $_ -Algorithm SHA256).Hash })
+          for ($i=0; $i -lt $before.Length; $i++) {
+            if ($before[$i] -ne $after[$i]) { throw "Installed update changed private data file: $($pathList[$i])" }
+          }
+          Write-Host 'PASS: repeated Windows installer preserved original SQLite, token and private artwork without a restore.'
+      - name: Launch real Anki 26.9.3 with AnkiCompanion on isolated Windows 11 x64 profile
+        timeout-minutes: 12
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_OPENGL: software
+          QSG_RHI_BACKEND: software
+          QTWEBENGINE_DISABLE_SANDBOX: '1'
+        run: |
+          # Anki uses PyQt6/QtWebEngine. The companion UI uses PySide6.
+          # Their packaged Qt DLLs must never be mixed in one Python process.
+          python -m venv "$env:RUNNER_TEMP/aqt-isolated"
+          & "$env:RUNNER_TEMP/aqt-isolated/Scripts/python.exe" -m pip install --disable-pip-version-check aqt==26.9.3 PyQt6==6.11.0 PyQt6-Qt6==6.11.2 PyQt6-WebEngine==6.11.0 PyQt6-WebEngine-Qt6==6.11.2
+          & "$env:RUNNER_TEMP/aqt-isolated/Scripts/python.exe" scripts/ci_windows_anki_launcher.py
+          if ($LASTEXITCODE -ne 0) { throw 'Real Anki launcher smoke failed' }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -121,6 +142,7 @@ jobs:
             test-results/
             *smoke*.log
             installer-smoke.log
+            installer-repeat.log
 
   emulator:
     runs-on: ubuntu-24.04
