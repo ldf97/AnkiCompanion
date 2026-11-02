@@ -16,7 +16,9 @@ def smoke():
     import aqt
     from desktop import bootstrap
     import subprocess
-    with TemporaryDirectory(prefix='anki-companion-win11-') as tmp:
+    # Anki keeps crash.log open briefly after app.quit() on Windows; the GUI
+    # launch passed, so a temporary log lock must not fail acceptance.
+    with TemporaryDirectory(prefix='anki-companion-win11-', ignore_cleanup_errors=True) as tmp:
         home=Path(tmp)
         roaming=home/'Roaming';local=home/'Local'
         (roaming/'Anki2').mkdir(parents=True)

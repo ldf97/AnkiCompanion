@@ -275,7 +275,7 @@ class Store:
                             completed=(date.fromisoformat(today)-timedelta(days=i)).isoformat() in complete)
                        for i in reversed(range(7))]
             today_events = [dict(id=r['id'], duration_ms=r['duration_ms']) for r in
-                db.execute('SELECT id,duration_ms FROM events WHERE day=? AND retracted=0', (today,))]
+                db.execute('SELECT id,duration_ms FROM events WHERE day=? AND retracted=0 ORDER BY id', (today,))]
             progress=lesson_progress(**totals.get(today,dict(answers=0,duration_ms=0)),policy=policy)
             state = dict(server_time_ms=now_ms, date=today, settings=settings, policy=policy,
                          lineup=lineup, seed=db.execute("SELECT value FROM meta WHERE key='seed'").fetchone()[0],

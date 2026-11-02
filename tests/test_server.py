@@ -316,3 +316,12 @@ def test_partial_or_corrupt_existing_db_is_never_silently_initialized(tmp_path):
         Store(path)
     with sqlite3.connect(path) as db:
         assert db.execute('SELECT note FROM owner_notes').fetchone()[0]=='DO NOT ERASE'
+
+
+def test_shared_revision_uses_stable_ordered_review_ids(client):
+    reviews=[event(4,1000,5),event(1,1000,2),event(3,1000,4)]
+    assert client.post('/v1/events',json={'device_id':'phone','events':reviews}).status_code==200
+    a=client.get('/v1/state').json()
+    ids=[e['id'] for e in a['today_events']]
+    assert ids==sorted(ids)
+    assert a['shared_revision']==client.get('/v1/state').json()['shared_revision']

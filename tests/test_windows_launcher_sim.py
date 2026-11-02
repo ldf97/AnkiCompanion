@@ -93,3 +93,10 @@ def test_windows_real_aqt_smoke_disables_only_invisible_first_run_lang_modal():
     assert 'manager.setLang("en")' in script
     assert "app=aqt._run(" in script
     assert 'faulthandler.dump_traceback_later' in script
+
+
+def test_real_anki_ci_smoke_does_not_fail_after_gui_success_due_to_locked_temp_log():
+    from pathlib import Path
+    source=(Path(__file__).resolve().parents[1]/'scripts/ci_windows_anki_launcher.py').read_text()
+    assert "ignore_cleanup_errors=True" in source
+    assert "PASS: real Anki/AQt opened" in source
