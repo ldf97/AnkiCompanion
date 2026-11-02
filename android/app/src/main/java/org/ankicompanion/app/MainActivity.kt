@@ -67,7 +67,22 @@ class MainActivity:Activity() {
                 .setPositiveButton("OK",null).show()
         }
     }
-    override fun onResume(){super.onResume();resumed=true;handler.removeCallbacks(ticker);handler.post(ticker)}
+    override fun onResume(){
+        super.onResume();resumed=true;handler.removeCallbacks(ticker);handler.post(ticker)
+        // Return from Android's one-time "Install unknown apps" permission
+        // screen and continue the same verified, already downloaded APK.
+        // Do not open a second permission screen if the user declined.
+        val saved=storage.getSetting("pending_update_path")
+        if(saved.isNotBlank() && packageManager.canRequestPackageInstalls()) {
+            val candidate=File(saved).canonicalFile
+            val updateDirectory=File(filesDir,"updates").canonicalFile
+            if(candidate.parentFile==updateDirectory && candidate.isFile && candidate.name.endsWith(".apk")) {
+                handler.post { try {
+                    if(Updates.install(this,candidate))storage.setSetting("pending_update_path","")
+                }catch(e:Exception){status.text=e.message ?: "Update installation failed"} }
+            } else storage.setSetting("pending_update_path","")
+        }
+    }
     override fun onPause(){resumed=false;handler.removeCallbacks(ticker);super.onPause()}
     private fun async(work:()->Any?,after:(Any?)->Unit={refresh()}) {
         Sync.executor.execute {
@@ -255,10 +270,19 @@ class MainActivity:Activity() {
                 .setMessage("Use the production-signed ${release.optString("version")} package. Review data stays in AnkiDroid and native AnkiWeb sync.")
                 .setNegativeButton("Later",null).setPositiveButton("Continue"){_,_->
                     status.text="Downloading and checking AnkiDroid Companion…"
-                    async({Updates.download(applicationContext,api(),release)}){file->Updates.install(this,file as File)}
+                    async({Updates.download(applicationContext,api(),release)}){file->installDownloaded(file as File)}
                 }.show()
         }
     }
+    private fun installDownloaded(file:File) {
+        // Remember a verified package if Android requires one-time permission.
+        // No export, reinstall or manual file selection is needed.
+        val candidate=file.canonicalFile
+        require(candidate.parentFile==File(filesDir,"updates").canonicalFile){"Unexpected installer location"}
+        storage.setSetting("pending_update_path",candidate.path)
+        if(Updates.install(this,candidate))storage.setSetting("pending_update_path","")
+    }
+
     private fun updates() {
         status.text="Checking GitHub release…"
         async({Updates.check(applicationContext,api(),true)}){result->
@@ -266,7 +290,7 @@ class MainActivity:Activity() {
             if(!release.optBoolean("available")){status.text=release.optString("message","No newer release");return@async}
             AlertDialog.Builder(this).setTitle("Update to "+release.getString("version")).setMessage(release.optString("notes")+"\nSource commit: "+release.optString("commit")).setNegativeButton("Later",null).setPositiveButton("Update"){_,_->
                 status.text="Downloading and verifying update…"
-                async({Updates.download(applicationContext,api(),release)}){file->Updates.install(this,file as File)}
+                async({Updates.download(applicationContext,api(),release)}){file->installDownloaded(file as File)}
             }.show()
         }
     }

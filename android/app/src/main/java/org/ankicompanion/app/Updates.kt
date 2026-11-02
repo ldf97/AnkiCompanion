@@ -160,12 +160,13 @@ object Updates {
         }
         return dest
     }
-    fun install(activity:Activity,file:File) {
+    fun install(activity:Activity,file:File):Boolean {
         if(!activity.packageManager.canRequestPackageInstalls()) {
             activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+activity.packageName)))
-            android.widget.Toast.makeText(activity,"Allow updates from Anki Companion, then tap Update again",android.widget.Toast.LENGTH_LONG).show();return
+            android.widget.Toast.makeText(activity,"Allow app installation; the verified update will resume automatically",android.widget.Toast.LENGTH_LONG).show();return false
         }
         val uri=FileProvider.getUriForFile(activity,activity.packageName+".files",file)
         activity.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri,"application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        return true // Installer was launched; Android still requires user confirmation.
     }
 }

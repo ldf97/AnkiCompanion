@@ -69,3 +69,16 @@ def test_full_release_requires_same_sha_ci_signing_and_explicit_promotion():
     assert 'publish: false' in automatic
     assert 'publish: true' not in automatic
     assert 'schedule:' not in automatic
+
+
+def test_android_update_permission_flow_resumes_installer_without_new_download():
+    updates=(ROOT/'android/app/src/main/java/org/ankicompanion/app/Updates.kt').read_text()
+    main=(ROOT/'android/app/src/main/java/org/ankicompanion/app/MainActivity.kt').read_text()
+    assert 'fun install(activity:Activity,file:File):Boolean' in updates
+    assert 'return false' in updates.split('ACTION_MANAGE_UNKNOWN_APP_SOURCES')[1].split('return true')[0]
+    assert 'pending_update_path' in main
+    assert 'packageManager.canRequestPackageInstalls()' in main
+    assert 'candidate.parentFile==updateDirectory' in main
+    assert main.count('installDownloaded(file as File)')==2
+    assert 'Updates.install(this,candidate)' in main
+    assert 'ACTION_CREATE_DOCUMENT' in main  # Exceptional recovery remains separate.
