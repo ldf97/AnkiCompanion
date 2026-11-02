@@ -39,7 +39,7 @@ jobs:
           printf 'COMPANION_DOMAIN=%s\nACME_EMAIL=%s\n' "$COMPANION_DOMAIN" "$ACME_EMAIL" > deployment/.env
           chmod 600 deployment/.env
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
-            'docker info >/dev/null && docker compose version >/dev/null && docker volume inspect ankicompanion_data >/dev/null'
+            'docker info >/dev/null && docker compose version >/dev/null && docker volume inspect ankicompanion_data >/dev/null && docker volume inspect ankicompanion_backups >/dev/null'
           echo "DEPLOY_REMOTE=$DEPLOY_USER@$DEPLOY_HOST" >> "$GITHUB_ENV"
       - name: Transfer source and restart without resetting server data
         run: |
@@ -50,7 +50,10 @@ jobs:
             'mkdir -p "$HOME/ankicompanion" && tar xf - -C "$HOME/ankicompanion"'
           scp -q deployment/.env "$DEPLOY_REMOTE:ankicompanion/deployment/.env"
           ssh -o BatchMode=yes "$DEPLOY_REMOTE" \
-            'cd "$HOME/ankicompanion/deployment" && docker compose --env-file .env -f compose.yaml up --build -d --wait --remove-orphans'
+            'cd "$HOME/ankicompanion/deployment" && \
+             docker compose --env-file .env -f compose.yaml build api && \
+             docker compose --env-file .env -f compose.yaml run -T --no-deps --rm api python -m server.backup snapshot --data /data --backups /backups && \
+             docker compose --env-file .env -f compose.yaml up -d --wait --remove-orphans'
       - name: Validate public HTTPS and bearer authentication
         env:
           COMPANION_DOMAIN: ${{ secrets.COMPANION_DOMAIN }}

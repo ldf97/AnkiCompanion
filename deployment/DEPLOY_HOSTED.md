@@ -4,7 +4,7 @@ The user's Windows laptop (ASUS TUF Gaming A16 FA617NS) can be off while an alwa
 
 ## One-time provisioning
 
-Create a Linux x86-64/ARM64 VM with Docker Engine and Docker Compose installed. Allow public TCP 80, 443 and UDP 443. Point a DNS A/AAAA record to the host. Create a non-root `ankicompanion` SSH deploy user who can run `docker compose` (host operator's responsibility). On that host provision external Docker volume **`ankicompanion_data`** once. Do not delete or recreate this volume during updates: it contains server token, SQLite WAL/database, private skin imports, and server settings.
+Create a Linux x86-64/ARM64 VM with Docker Engine and Docker Compose installed. Allow public TCP 80, 443 and UDP 443. Point a DNS A/AAAA record to the host. Create a non-root `ankicompanion` SSH deploy user who can run `docker compose` (host operator's responsibility). On that host provision external Docker volumes **`ankicompanion_data`** and **`ankicompanion_backups`** once. Do not delete or recreate these volumes during updates: the data volume contains the server token, SQLite WAL/database, private skin imports, and server settings. The separate backups volume contains SHA-256-verified, transaction-consistent snapshots taken **before each subsequent container deployment**. They include token and private artwork: keep host volume access restricted, and back it up off-host as well. A new server with no database skips snapshot creation. A snapshot failure aborts deployment before replacing the running container.
 
 Configure GitHub environment `hosted-production` with protected secrets:
 
@@ -28,3 +28,11 @@ After migration, use the app's Connection/Pairing UI to point clients to `https:
 The GitHub deployment job checks `/health` over public HTTPS and verifies unauthenticated `/v1/state` is rejected. It cannot validate private event history without a server token. Database volume persists across container replacements/reboots and `docker compose down` (not an operator deleting the external volume). No remote passwords or private signing keys are stored in git.
 
 Cloud hosting costs, DNS/domain ownership, host hardening and uptime remain the host owner's responsibility. Offline devices see the committed revisions when they reconnect, but native Anki collection sync additionally depends on AnkiWeb availability.
+
+## Automatic update protection (#24 and #28)
+
+The deployment workflow builds the candidate container, snapshots the **currently live** SQLite database using SQLite's online backup API (including WAL-committed reviews), archives the server pairing token and all private imported skin files to the separate persistent backup volume, validates every SHA-256 digest, and only then replaces containers. The server never deletes the database or resets the token on routine updates. No interactive restore step is part of a normal update.
+
+To inspect a historical backup on the host, run the verification command in `server/backup.py` against a chosen archive. Do not publicly upload a snapshot; its token, history and private images are sensitive. This snapshot does not replace an encrypted off-host backup or guarantee recovery from loss of both host volumes.
+
+A first move **from Windows to a cloud host** is not an ordinary update: the user's existing server history, token, and private packs must be migrated once before pairing devices. Never silently start the new cloud host with an empty history and advertise it as a successful migration.

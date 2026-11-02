@@ -18,6 +18,7 @@ services:
       ANKI_COMPANION_SKIN: study_companion
     volumes:
       - ankicompanion_data:/data:rw
+      - ankicompanion_backups:/backups:rw
     networks: [internal]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8765/health',timeout=2).status==200"]
@@ -55,6 +56,9 @@ volumes:
   ankicompanion_data:
     external: true
     name: ankicompanion_data
+  ankicompanion_backups:
+    external: true
+    name: ankicompanion_backups
   caddy_data:
     name: ankicompanion_caddy_data
   caddy_config:

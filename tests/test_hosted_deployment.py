@@ -31,3 +31,60 @@ def test_public_ingress_tls_auth_check():
     assert '{$COMPANION_DOMAIN}' in caddy
     src=(ROOT/'scripts/check_hosted.py').read_text()
     assert '/v1/state' in src and '401' in src
+
+def test_live_wal_snapshot_preserves_history_token_and_private_skin(tmp_path):
+    import json
+    import sqlite3
+    from zipfile import ZipFile
+    from server.main import create_app
+    from server.backup import snapshot_server, verify_snapshot
+    from fastapi.testclient import TestClient
+
+    home=tmp_path/"live"
+    app=create_app(home,clock=lambda:1783094400000)
+    token=(home/"token.txt").read_text()
+    with TestClient(app,headers={"Authorization":"Bearer "+token}) as client:
+        settings=client.get("/v1/settings").json()
+        assert client.put("/v1/settings",json=dict(settings,lesson_answers=71)).status_code==200
+        review=dict(collection_id="primary",revlog_id=1783094300000,card_id=971,
+                    duration_ms=1200,rating=4)
+        assert client.post("/v1/events",json={"events":[review]}).status_code==200
+    skin=home/"packs"/"private_custom"/"1.0.0";skin.mkdir(parents=True)
+    (skin/"art.png").write_bytes(b"PRIVATE TEST BYTES")
+    saved=snapshot_server(home,tmp_path/"backups")
+    manifest=verify_snapshot(saved)
+    assert set(manifest["files"])=={"companion.sqlite3","token.txt",
+                                    "packs/private_custom/1.0.0/art.png"}
+    with ZipFile(saved) as archive:
+        assert archive.read("token.txt").decode()==token
+        assert archive.read("packs/private_custom/1.0.0/art.png")==b"PRIVATE TEST BYTES"
+        restored=tmp_path/"snapshot.sqlite3"
+        restored.write_bytes(archive.read("companion.sqlite3"))
+    with sqlite3.connect(restored) as db:
+        assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==1
+        saved_settings=json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
+        assert saved_settings["lesson_answers"]==71
+
+
+def test_snapshot_skips_virgin_install_and_detects_corruption(tmp_path):
+    import pytest
+    from server.backup import snapshot_server, verify_snapshot, SnapshotError
+    assert snapshot_server(tmp_path/"new",tmp_path/"backup") is None
+    from server.main import create_app
+    home=tmp_path/"live"
+    create_app(home)
+    saved=snapshot_server(home,tmp_path/"backup")
+    assert saved is not None and verify_snapshot(saved)["schema"]==1
+    # Invalid/truncated ZIP must never pass as a verified backup.
+    saved.write_bytes(saved.read_bytes()[:100])
+    with pytest.raises((SnapshotError,Exception)):
+        verify_snapshot(saved)
+
+
+def test_deployment_backs_up_before_replacing_running_container():
+    script=(ROOT/'.github/workflows/deploy-hosted.yml').read_text()
+    assert script.index("server.backup snapshot") < script.index("up -d --wait --remove-orphans")
+    assert "docker volume inspect ankicompanion_backups" in script
+    compose=(ROOT/'deployment/compose.yaml').read_text()
+    assert "ankicompanion_backups:/backups:rw" in compose
+    assert "name: ankicompanion_backups" in compose
