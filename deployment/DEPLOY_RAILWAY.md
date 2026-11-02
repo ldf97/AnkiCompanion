@@ -5,6 +5,8 @@ The source is `.railway/railway.ts`, using Railway's current Infrastructure-as-C
 
 **Prerequisites for a real deployment:** connect a Railway hosting account, approve a long-running server and two persistent volumes, and create a public HTTPS Railway domain. Railway incurs hosting/storage charges. This repo and GitHub Actions are not themselves an always-on cloud host.
 
+**Point-and-click public HTTPS URL:** after provisioning the Railway project, open **AnkiCompanion Server → Settings → Networking → Public Networking → Generate Domain**. Railway assigns a `*.up.railway.app` domain with HTTPS. Railway-generated domains are **not created automatically by `.railway/railway.ts`** and cannot currently be declared as a generated address in that IaC file. No separate paid custom domain is required. Verify `https://YOUR_DOMAIN/health` and a 401 on unauthenticated `https://YOUR_DOMAIN/v1/state` before selecting the new address in Windows/Android Connection. (A 401 here is expected.)
+
 ## What the infrastructure definition creates
 
 - One long-running FastAPI service built using `server/Dockerfile`; one replica, because multiple independent SQLite replicas would corrupt or diverge the progress state.
