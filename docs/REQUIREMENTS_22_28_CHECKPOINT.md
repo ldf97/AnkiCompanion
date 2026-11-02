@@ -14,7 +14,7 @@ Do not merge or publish until full CI, signing, real-device upgrade and Anki acc
 
 ## Sequential work ledger
 - [x] **22**: Shared SHA-256 revision from confirmed state, displayed by desktop/Android; local `pytest tests/test_server.py -k shared_revision` passed (2 tests).
-- [ ] **23**: Not started.
+- [x] **23**: Server now fails closed if an existing database is missing its token or required schema/settings; local restart and data-retention tests verify the original bytes, history, shared revision and owner artwork survive updates.
 - [ ] **24**: Not started.
 - [ ] **25**: Not started.
 - [ ] **26**: Not started.

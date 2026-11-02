@@ -12,7 +12,14 @@ class Store:
     def __init__(self, path):
         self.path = Path(path); self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
+        existing_database=self.path.exists() and self.path.stat().st_size>0
         with self.tx() as db:
+            if existing_database:
+                tables={row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                if 'meta' not in tables or 'events' not in tables:
+                    raise RuntimeError('Existing study database is missing required tables; refusing to initialize over user data')
+                if db.execute("SELECT 1 FROM meta WHERE key='settings'").fetchone() is None:
+                    raise RuntimeError('Existing study database has no settings; refusing to replace user preferences')
             db.executescript('''
             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, payload TEXT NOT NULL,

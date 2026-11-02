@@ -23,6 +23,10 @@ def create_app(data_dir=None, token=None, clock=None):
         token = os.environ.get('ANKI_COMPANION_TOKEN')
         if not token:
             if not token_file.exists():
+                # Existing study history must NEVER be paired to a brand-new
+                # token silently after a partial restore or failed upgrade.
+                if (data/'companion.sqlite3').exists():
+                    raise RuntimeError('Existing server database has no pairing token; restore token.txt from the verified backup before starting')
                 token_file.write_text(secrets.token_urlsafe(32)); token_file.chmod(0o600)
             token = token_file.read_text().strip()
     if len(token) < 16: raise ValueError('Server token must contain at least 16 characters')

@@ -266,3 +266,53 @@ def test_shared_revision_is_not_a_native_sync_receipt_or_wall_clock(tmp_path):
     assert shared_revision(a)==shared_revision(b)
     b['progress']={'answers':13}
     assert shared_revision(a)!=shared_revision(b)
+
+
+def test_update_restart_preserves_confirmed_history_settings_and_token(tmp_path):
+    import hashlib
+    from server.main import create_app
+    data=tmp_path/'state'
+    app=create_app(data,clock=lambda:NOW)
+    token=(data/'token.txt').read_bytes()
+    art=data/'packs'/'owner-private'/'1.0.0'/'original.png'
+    art.parent.mkdir(parents=True);art.write_bytes(b'original private image content')
+    with TestClient(app,headers={'Authorization':'Bearer '+token.decode().strip()}) as first:
+        settings=first.get('/v1/settings').json()
+        settings['lesson_answers']=77
+        assert first.put('/v1/settings',json=settings).status_code==200
+        assert first.post('/v1/events',json={'device_id':'phone','events':[event()]}).status_code==200
+        before=first.get('/v1/state').json()
+    saved_hash=hashlib.sha256(art.read_bytes()).hexdigest()
+    later=create_app(data,clock=lambda:NOW)
+    assert (data/'token.txt').read_bytes()==token
+    with TestClient(later,headers={'Authorization':'Bearer '+token.decode().strip()}) as after:
+        assert after.get('/v1/state').json()['shared_revision']==before['shared_revision']
+        assert after.get('/v1/state').json()['progress']==before['progress']
+        assert after.get('/v1/settings').json()['lesson_answers']==77
+        assert after.get('/v1/events/audit').json()['events'][0]['origin_device_id']=='phone'
+    assert hashlib.sha256(art.read_bytes()).hexdigest()==saved_hash
+
+
+def test_existing_db_missing_pairing_token_fails_closed_without_replacing_state(tmp_path):
+    from server.main import create_app
+    data=tmp_path/'state'
+    create_app(data)
+    db=data/'companion.sqlite3';original=db.read_bytes()
+    (data/'token.txt').unlink()
+    with pytest.raises(RuntimeError,match='no pairing token'):
+        create_app(data)
+    assert not (data/'token.txt').exists()
+    assert db.read_bytes()==original
+
+
+def test_partial_or_corrupt_existing_db_is_never_silently_initialized(tmp_path):
+    import sqlite3
+    from server.store import Store
+    path=tmp_path/'partial.sqlite3'
+    with sqlite3.connect(path) as db:
+        db.execute('CREATE TABLE owner_notes(note TEXT NOT NULL)')
+        db.execute('INSERT INTO owner_notes VALUES (?)',('DO NOT ERASE',))
+    with pytest.raises(RuntimeError,match='missing required tables'):
+        Store(path)
+    with sqlite3.connect(path) as db:
+        assert db.execute('SELECT note FROM owner_notes').fetchone()[0]=='DO NOT ERASE'
