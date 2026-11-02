@@ -14,7 +14,9 @@ def device_status(device):
         live='online'
     else:
         live='liveness unknown'
-    if latest>applied:
+    if revision.get('conflicted'):
+        native='Anki review-ID collision: scheduling sync blocked; study activity preserved'
+    elif latest>applied:
         native=f'Anki sync pending {applied}/{latest}'
     elif latest>0 and applied>=latest:
         native=f'Anki sync confirmed {applied}/{latest}'

@@ -73,7 +73,11 @@ object Sync {
                 val ticket=sync?.optString("outgoing_ticket","")?.ifEmpty {store.getSetting("native_upload_ticket")} ?: store.getSetting("native_upload_ticket")
                 if(ticket.isNotEmpty())store.setSetting("native_upload_ticket",ticket)
                 val remotePending=sync?.optBoolean("pending")==true
-                if(ticket.isNotEmpty() || remotePending) {
+                val nativeCollision=sync?.optBoolean("conflicted")==true
+                if(nativeCollision) {
+                    store.setSetting("bridge_status","Native review-ID collision: scheduling sync paused; study attempts saved")
+                    store.setSetting("native_retry_pending","false")
+                } else if(ticket.isNotEmpty() || remotePending) {
                     try {
                         // A successful native Anki sync BEFORE publishing its
                         // matching server ticket proves the collection upload
@@ -153,6 +157,13 @@ object Sync {
             require(!out.hasUnsent()){"Pending reviews are still uploading; retry study handoff"}
         }
         val before=try {api.json(url)}catch(e:IOException){return offlineStudy(context,store)}
+        if(before.getJSONObject("native_sync").optBoolean("conflicted")) {
+            // Keep local-first studying available; DO NOT certify a remote
+            // schedule containing two cards with one native Anki revlog ID.
+            store.setSetting("study_handoff_mode","local_unsynced")
+            store.setSetting("bridge_status","Native review-ID collision; studying locally, cross-device scheduling paused")
+            return before.getJSONObject("settings")
+        }
         AnkiBridge.configure(context,before.getJSONObject("settings"))
         // Even with no companion revision pending, an external AnkiWeb update
         // may exist. Native synchronization is mandatory for ONLINE handoff.

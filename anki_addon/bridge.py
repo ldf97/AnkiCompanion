@@ -17,6 +17,7 @@ class Bridge:
         self.discover_local_token()
         self.applied_revision=int(self.config.get('applied_revision',0))
         self.native_sync_error=str(self.config.get('native_sync_error',''))
+        self.native_collision_blocked=False
         self.pending_ticket=self.config.get('native_upload_ticket','')
         self.confirmed_ticket=self.config.get('native_confirmed_ticket','')
         if not self.config.get('device_id'):
@@ -179,6 +180,17 @@ class Bridge:
         if self.stopped or not mw.col:return
         if settings:self.settings=settings
         if error:print('Anki Companion offline:',error)
+        self.native_collision_blocked=bool(native.get('conflicted',False))
+        if self.native_collision_blocked:
+            self.native_sync_error='Native review-ID collision: two devices assigned one review ID to different cards; automatic scheduling sync deferred. Activity and outbox preserved.'
+            self.config['native_sync_error']=self.native_sync_error
+            mw.addonManager.writeConfig(NAME,self.config)
+            print('Anki Companion:',self.native_sync_error)
+            return
+        if self.native_sync_error.startswith('Native review-ID collision:'):
+            self.native_sync_error=''
+            self.config['native_sync_error']=''
+            mw.addonManager.writeConfig(NAME,self.config)
         # A study command cannot open a deck based on an old native collection.
         # Complete the remote revision first; the unacknowledged command will be
         # fetched again by tick() after that synchronization succeeds.
@@ -217,7 +229,8 @@ class Bridge:
         retries, sleep and process restart. A newer remote revision or offline
         server defers study rather than presenting potentially stale cards.
         """
-        if self.stopped or self.answers.needs_sync or self.answers.needs_scan:
+        if (self.stopped or self.native_collision_blocked or
+                self.answers.needs_sync or self.answers.needs_scan):
             self.tick()
             return
         self.busy=True
@@ -261,7 +274,8 @@ class Bridge:
         self.next_native_attempt_at=time.monotonic()+seconds
 
     def sync_then(self,after):
-        if self.syncing or time.monotonic()<self.next_native_attempt_at:return
+        if (self.syncing or self.native_collision_blocked or
+                time.monotonic()<self.next_native_attempt_at):return
         auth=mw.pm.sync_auth()
         if not self.config.get('auto_sync',True) or not auth:
             print('Anki Companion: configure native Anki sync before automatic handoff')

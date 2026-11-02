@@ -45,6 +45,16 @@ class Store:
                 collection TEXT NOT NULL DEFAULT '', origin_device TEXT NOT NULL DEFAULT '',
                 target_device TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS change_events_collection_seq ON change_events(collection, seq);
+            -- Different devices can create the same millisecond revlog ID for
+            -- different cards. Anki revlog itself uses that ID as its primary
+            -- key; preserve both study attempts but do not certify that both
+            -- native scheduling effects were successfully synchronized.
+            CREATE TABLE IF NOT EXISTS native_id_collisions(
+                collection TEXT NOT NULL, revlog_id INTEGER NOT NULL,
+                first_id TEXT NOT NULL, second_id TEXT NOT NULL,
+                detected_ms INTEGER NOT NULL,
+                PRIMARY KEY(collection,revlog_id,first_id,second_id));
+            CREATE INDEX IF NOT EXISTS native_id_collisions_collection ON native_id_collisions(collection);
             ''')
             # Add the ticket to existing deployments without erasing histories.
             cols={row['name'] for row in db.execute('PRAGMA table_info(sync_pending)')}
@@ -189,6 +199,16 @@ class Store:
                         enriched = True
                         changed_collections.add(event.collection_id)
                     continue
+                # Review attempt identity includes a card ID, but native Anki
+                # revlog IDs do not. Capture this dangerous collision without
+                # deleting either user's legitimate study attempt.
+                prefix=f'{event.collection_id}:{event.revlog_id}:'
+                other=db.execute('SELECT id FROM events WHERE id LIKE ? LIMIT 1',
+                                 (prefix+'%',)).fetchone()
+                if other and other['id']!=event.key:
+                    first,second=sorted((other['id'],event.key))
+                    db.execute('INSERT OR IGNORE INTO native_id_collisions VALUES(?,?,?,?,?)',
+                               (event.collection_id,event.revlog_id,first,second,now_ms))
                 day = study_day(event.revlog_id, settings['timezone'], settings['rollover_minute'])
                 self._day(db, day, packs)
                 undone = bool(db.execute('SELECT 1 FROM tombstones WHERE id=?', (event.key,)).fetchone())
@@ -277,7 +297,12 @@ class Store:
             collection=snapshot.collection_id
             db.execute('INSERT OR IGNORE INTO sync_versions(collection,revision) VALUES (?,0)',(collection,))
             current=db.execute('SELECT revision FROM sync_versions WHERE collection=?',(collection,)).fetchone()[0]
-            if snapshot.sync_status in ('synced','native Anki sync') and snapshot.collection_synced_ms>0:
+            collision=db.execute('SELECT 1 FROM native_id_collisions WHERE collection=? LIMIT 1',
+                                 (collection,)).fetchone()
+            # One native revlog primary-key cannot represent two conflicting
+            # review attempts. Never clear their outgoing native sync tickets.
+            if (not collision and snapshot.sync_status in ('synced','native Anki sync')
+                    and snapshot.collection_synced_ms>0):
                 pending=db.execute('SELECT * FROM sync_pending WHERE collection=? AND device=?',
                                    (collection,snapshot.device_id)).fetchone()
                 # Native-sync tickets prove that THIS source's event batch had
@@ -312,8 +337,11 @@ class Store:
             applied=int(receipt[0]) if receipt else 0
             outgoing=db.execute('SELECT ticket FROM sync_pending WHERE collection=? AND device=? AND dirty=1',
                                 (collection_id,device_id)).fetchone()
+            collision_count=db.execute('SELECT COUNT(*) FROM native_id_collisions WHERE collection=?',
+                                       (collection_id,)).fetchone()[0]
             return {'collection_id':collection_id,'revision':latest,
                     'applied_revision':applied,'pending':latest>applied,
+                    'conflicted':bool(collision_count),'native_collision_count':collision_count,
                     'outgoing_ticket':outgoing['ticket'] if outgoing else ''}
 
     def state(self, packs, now_ms):
@@ -349,8 +377,12 @@ class Store:
                 age=max(0,int((now_ms-device['updated_ms'])/1000))
                 device['age_seconds']=age
                 device['online']=age<=120
+                collision_count=db.execute('SELECT COUNT(*) FROM native_id_collisions WHERE collection=?',
+                                           (collection,)).fetchone()[0]
                 device['native_sync']=dict(revision=latest,applied_revision=applied,
-                                            pending=latest>applied)
+                                            pending=latest>applied,
+                                            conflicted=bool(collision_count),
+                                            native_collision_count=collision_count)
             history = [dict(date=(date.fromisoformat(today)-timedelta(days=i)).isoformat(),
                             completed=(date.fromisoformat(today)-timedelta(days=i)).isoformat() in complete)
                        for i in reversed(range(7))]
