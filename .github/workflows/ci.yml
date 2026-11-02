@@ -118,7 +118,7 @@ jobs:
           }
           Write-Host 'PASS: repeated Windows installer preserved original SQLite, token and private artwork without a restore.'
       - name: Launch real Anki 26.9.3 with AnkiCompanion on isolated Windows 11 x64 profile
-        timeout-minutes: 12
+        timeout-minutes: 5
         shell: pwsh
         env:
           QT_QPA_PLATFORM: offscreen

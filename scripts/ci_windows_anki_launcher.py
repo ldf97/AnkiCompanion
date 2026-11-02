@@ -5,7 +5,7 @@ software rendering to cover the user's disabled Radeon/Code-22 fallback.
 """
 from pathlib import Path
 from tempfile import TemporaryDirectory
-import os, sys, traceback
+import os, sys, traceback, faulthandler
 ROOT=Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:sys.path.insert(0,str(ROOT))
 
@@ -36,11 +36,18 @@ def smoke():
         # Anki supports -b alternate profile path, per the official manual.
         # exec=False returns after window setup, proving addon import and
         # startup instead of timing out a GUI indefinitely.
+        # CI uses a noninteractive Windows service session. If Anki opens a
+        # hidden modal/first-run window, dump the Python stacks and fail
+        # decisively rather than burning the entire 12-minute Windows job.
+        faulthandler.enable()
+        faulthandler.dump_traceback_later(75, repeat=False, exit=True)
+        print("Starting isolated Anki GUI with companion bridge",flush=True)
         app=aqt._run(['anki','-b',str(roaming/'Anki2'),'-l','en'],exec=False)
         if app is None or aqt.mw is None:
             raise RuntimeError('Anki launcher did not create its GUI window')
         assert getattr(aqt.mw,'addonManager',None) is not None
         print('PASS: real Anki/AQt opened on isolated Windows x64 profile with companion bridge')
+        faulthandler.cancel_dump_traceback_later()
         app.quit()
 
 if __name__=='__main__':
