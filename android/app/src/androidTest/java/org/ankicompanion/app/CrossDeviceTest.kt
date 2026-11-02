@@ -104,5 +104,6 @@ class CrossDeviceTest {
         }
         assertTrue("AnkiDroid scheduling did not converge",matched)
         instrumentation.runOnMainSync {widgetHost.stopListening();widgetHost.deleteAppWidgetId(widgetId)}
+        signal("observer-finished")
     }
 }

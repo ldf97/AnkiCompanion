@@ -40,7 +40,7 @@ def report():
     events=[Event(collection_id='primary',revlog_id=r,card_id=c,duration_ms=min(600000,max(t,0))) for r,c,t in col.db.all('SELECT id,cid,time FROM revlog WHERE ease>0')]
     api.state.store.add_events(events,api.state.packs,device_id='desktop-native')
 report()
-status=dict(phone_ready=False,observer_ready=False,phone_widget30=False,desktop_widget30=False,phone_widget50=False,desktop_widget50=False,phone_finished=False,matched=False,phase=0)
+status=dict(phone_ready=False,observer_ready=False,phone_widget30=False,desktop_widget30=False,phone_widget50=False,desktop_widget50=False,phone_finished=False,observer_finished=False,matched=False,phase=0)
 lock=threading.RLock()
 def record():
     (root/'acceptance-status.json').write_text(json.dumps(status,indent=2))
@@ -51,7 +51,7 @@ def read_status():
 @api.post('/test/{action}')
 def control(action:str,body:dict=Body(default={})):
     with lock:
-        key={'phone-ready':'phone_ready','observer-ready':'observer_ready','phone-finished':'phone_finished','observed30':'phone_widget30','observed50':'phone_widget50','desktop30':'desktop_widget30','desktop50':'desktop_widget50'}.get(action)
+        key={'phone-ready':'phone_ready','observer-ready':'observer_ready','phone-finished':'phone_finished','observed30':'phone_widget30','observed50':'phone_widget50','desktop30':'desktop_widget30','desktop50':'desktop_widget50','observer-finished':'observer_finished'}.get(action)
         if key:status[key]=True
         elif action=='verify-phone':
             expected=dict(reviews=col.db.all('SELECT id,cid,ease,ivl,lastIvl FROM revlog ORDER BY id'),cards=col.db.all('SELECT id,queue,type,due,ivl,reps,lapses FROM cards ORDER BY id'))

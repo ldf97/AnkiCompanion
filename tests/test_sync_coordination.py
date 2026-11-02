@@ -118,3 +118,16 @@ def test_sync_status_ui_distinguishes_server_progress_from_native_receipt():
     assert "Anki sync pending $applied/$revision" in android
     assert "Anki sync confirmed $applied/$revision" in android
     assert "Scheduling sync pending:" in android
+
+def test_cross_device_test_holds_native_provider_alive_until_companion_finishes():
+    """Avoid false instrument crash when Android kills a dependent process."""
+    from pathlib import Path
+    root=Path(__file__).resolve().parents[1]
+    phone=(root/"ankidroid_bridge/CompanionAcceptanceTest.kt").read_text()
+    observer=(root/"android/app/src/androidTest/java/org/ankicompanion/app/CrossDeviceTest.kt").read_text()
+    backend=(root/"scripts/emulator_backend.py").read_text()
+    assert 'optBoolean("observer_finished")' in phone
+    assert 'signal("observer-finished")' in observer
+    assert "'observer-finished':'observer_finished'" in backend
+    assert phone.index('assertTrue(control("/test/verify-phone"') < phone.index('optBoolean("observer_finished")')
+    assert observer.index("widgetHost.stopListening()") < observer.index('signal("observer-finished")')
