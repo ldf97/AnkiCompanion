@@ -129,6 +129,7 @@ def test_update_is_one_click_and_relaunches_only_on_update_switch():
     assert 'IsAutoUpdate' in installer
     assert 'GetCmdTail' in installer
     assert 'Check: IsAutoUpdate' in installer
+    assert '\n// User data lives outside' in installer
     release=(root/'.github/workflows/auto-release.yml').read_text()
     candidate=(root/'.github/workflows/release-candidate.yml').read_text()
     assert 'publish: true' in release
