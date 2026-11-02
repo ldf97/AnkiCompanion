@@ -15,12 +15,16 @@ import javax.crypto.spec.GCMParameterSpec
 import java.util.UUID
 
 class Storage(val context:Context) {
+    companion object { private val fileLock=Any() }
     private val prefs=context.getSharedPreferences("companion",Context.MODE_PRIVATE)
     val root=context.filesDir
-    val deviceId:String get() {
-        var id=prefs.getString("device_id",null)
-        if(id==null){id="android-"+UUID.randomUUID().toString();check(prefs.edit().putString("device_id",id).commit()){"Could not save stable device ID"}}
-        return id
+    val deviceId:String get() = synchronized(fileLock) {
+        val stored=prefs.getString("device_id",null)
+        if(stored!=null)stored else {
+            val created="android-"+UUID.randomUUID().toString()
+            check(prefs.edit().putString("device_id",created).commit()){"Could not save stable device ID"}
+            created
+        }
     }
     private fun key():SecretKey {
         val store=KeyStore.getInstance("AndroidKeyStore");store.load(null)
@@ -45,19 +49,25 @@ class Storage(val context:Context) {
     }
     // Android AtomicFile rolls back a torn write if an APK update or app
     // shutdown interrupts a JSON replacement. Normal updates reuse filesDir.
-    fun load(name:String):JSONObject? = try {
-        val file=AtomicFile(File(root,name))
-        JSONObject(String(file.openRead().use{it.readBytes()},Charsets.UTF_8))
-    } catch(e:Exception){null}
-    @Synchronized fun save(name:String,value:JSONObject) {
-        val file=AtomicFile(File(root,name))
-        val stream=file.startWrite()
+    fun load(name:String):JSONObject? = synchronized(fileLock) {
         try {
-            stream.write(value.toString().toByteArray(Charsets.UTF_8))
-            file.finishWrite(stream)
-        } catch(e:Exception) {
-            file.failWrite(stream)
-            throw e
+            val file=AtomicFile(File(root,name))
+            JSONObject(String(file.openRead().use{it.readBytes()},Charsets.UTF_8))
+        } catch(e:Exception){null}
+    }
+    fun save(name:String,value:JSONObject) {
+        // Cross-instance lock: widgets, service and activity each construct a
+        // Storage object, but must serialize writes to one AtomicFile.
+        synchronized(fileLock) {
+            val file=AtomicFile(File(root,name))
+            val stream=file.startWrite()
+            try {
+                stream.write(value.toString().toByteArray(Charsets.UTF_8))
+                file.finishWrite(stream)
+            } catch(e:Exception) {
+                file.failWrite(stream)
+                throw e
+            }
         }
     }
     fun getSetting(name:String,default:String=""):String=prefs.getString(name,default) ?: default
