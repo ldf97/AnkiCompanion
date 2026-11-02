@@ -15,6 +15,8 @@ class Bridge:
         self.config=mw.addonManager.getConfig(NAME) or {}
         self.discover_local_token()
         self.applied_revision=int(self.config.get('applied_revision',0))
+        self.pending_ticket=self.config.get('native_upload_ticket','')
+        self.confirmed_ticket=self.config.get('native_confirmed_ticket','')
         if not self.config.get('device_id'):
             self.config['device_id']='desktop-'+uuid.uuid4().hex
             mw.addonManager.writeConfig(NAME,self.config)
@@ -79,14 +81,15 @@ class Bridge:
         except Exception as exc:print('Anki Companion scan:',exc);return
         self.busy=True
         def worker():
-            error=None;commands=[];settings={};native={}
+            error=None;commands=[];settings={};native={};source_ticket=''
             try:
                 api=self.client()
                 with self.lock,self.db() as db:
                     pending=db.execute('SELECT id,payload FROM outbox WHERE sent=0 LIMIT 1000').fetchall()
                     undo=[r[0] for r in db.execute('SELECT id FROM undo WHERE sent=0 LIMIT 1000')]
                 if pending:
-                    api.request('/v1/events','POST',{'device_id':self.config['device_id'],'events':[json.loads(p) for i,p in pending]})
+                    receipt=api.request('/v1/events','POST',{'device_id':self.config['device_id'],'events':[json.loads(p) for i,p in pending]})
+                    source_ticket=receipt.get('native_upload_tickets',{}).get(self.config.get('collection_id','primary'),'')
                     with self.lock,self.db() as db:db.executemany('UPDATE outbox SET sent=1 WHERE id=?',[(i,) for i,p in pending])
                 if undo:
                     api.request('/v1/events/retract','POST',{'ids':undo,'device_id':self.config['device_id']})
@@ -95,17 +98,27 @@ class Bridge:
                     label=self.config.get('device_label','Anki Desktop'),decks=decks,
                     collection_id=self.config.get('collection_id','primary'),
                     applied_revision=self.applied_revision,
+                    native_upload_ticket=self.confirmed_ticket,
                     sync_status='native Anki sync' if self.collection_synced_ms else 'not yet synced',
                     collection_synced_ms=self.collection_synced_ms))
                 query='?device_id='+quote(self.config['device_id'],safe='')+'&collection_id='+quote(self.config.get('collection_id','primary'),safe='')
                 state=api.request('/v1/state'+query)
                 settings=state['settings'];native=state.get('native_sync',{})
+                source_ticket=native.get('outgoing_ticket') or source_ticket
                 commands=api.request('/v1/commands/'+self.config['device_id'])['commands']
             except Exception as exc:error=str(exc)
-            if not self.stopped:mw.taskman.run_on_main(lambda:self.received(commands,settings,native,error))
+            if not self.stopped:mw.taskman.run_on_main(lambda:self.received(commands,settings,native,source_ticket,error))
         threading.Thread(target=worker,daemon=True).start()
-    def received(self,commands,settings,native,error):
+    def received(self,commands,settings,native,source_ticket,error):
         self.busy=False
+        if source_ticket and source_ticket!=self.confirmed_ticket:
+            self.pending_ticket=source_ticket
+            self.config['native_upload_ticket']=source_ticket
+            mw.addonManager.writeConfig(NAME,self.config)
+        if not source_ticket and self.confirmed_ticket and not error:
+            self.confirmed_ticket=''
+            self.config['native_confirmed_ticket']=''
+            mw.addonManager.writeConfig(NAME,self.config)
         if self.stopped or not mw.col:return
         if settings:self.settings=settings
         if error:print('Anki Companion offline:',error)
@@ -162,6 +175,12 @@ class Bridge:
                     print('Anki Companion: complete initial/full sync in Anki before study handoff')
                     return
                 self.collection_synced_ms=int(time.time()*1000);self.review_dirty=False
+                if self.pending_ticket:
+                    self.confirmed_ticket=self.pending_ticket
+                    self.pending_ticket=''
+                    self.config['native_upload_ticket']=''
+                    self.config['native_confirmed_ticket']=self.confirmed_ticket
+                    mw.addonManager.writeConfig(NAME,self.config)
                 mw.col._load_scheduler();mw.col.models._clear_cache()
                 if mw.state in ('deckBrowser','overview'):
                     mw.reset()

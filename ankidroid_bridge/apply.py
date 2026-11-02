@@ -16,6 +16,10 @@ def apply(root):
     base='AnkiDroid/src/main/java/com/ichi2/anki/'
     shutil.copy2(overlay/'CompanionIntegration.kt',root/base/'CompanionIntegration.kt')
     edit('AnkiDroid/build.gradle','applicationId = "com.ichi2.anki"','applicationId = "com.ichi2.anki.companion"')
+    # A separate monotonically increasing production version series ensures that
+    # both release and debug test installations can be upgraded without data loss.
+    edit('AnkiDroid/build.gradle','versionCode=22503300',
+         'versionCode = 220000000 + Integer.parseInt(System.getenv("ANKIDROID_COMPANION_BUILD") ?: "0")')
     edit('AnkiDroid/build.gradle','resValue "string", "app_name", "AnkiDroid"','resValue "string", "app_name", "AnkiDroid Companion"')
     api=root/'api/build.gradle.kts';api.write_text(api.read_text().replace('com.ichi2.anki.permission.READ_WRITE_DATABASE','com.ichi2.anki.companion.permission.READ_WRITE_DATABASE').replace('com.ichi2.anki.flashcards','com.ichi2.anki.companion.flashcards').replace('com.ichi2.anki.debug.permission','com.ichi2.anki.companion.debug.permission').replace('com.ichi2.anki.debug.flashcards','com.ichi2.anki.companion.debug.flashcards'))
     edit(base+'AnkiDroidApp.kt','        initializeNavigator()','        initializeNavigator()\n        CompanionIntegration.initialize(this)')

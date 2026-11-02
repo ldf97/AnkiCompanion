@@ -91,6 +91,78 @@ jobs:
           name: signed-android
           if-no-files-found: ignore
           path: candidate/
+  ankidroid:
+    if: github.ref == 'refs/heads/main'
+    environment: signing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ankidroid/Anki-Android
+          ref: d9bf072f814a0c37d30a694192593b31ff2df875
+          path: ankidroid-upstream
+      - uses: actions/setup-java@v4
+        with:
+          distribution: jetbrains
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Apply stable companion overlay and sign production APK
+        env:
+          SIGNING_BUNDLE: ${{ secrets.ANDROID_SIGNING_BUNDLE }}
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANKIDROID_COMPANION_BUILD: ${{ inputs.build }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SIGNING_BUNDLE" ] && [ -z "$KEYSTORE_BASE64" ]; then
+            echo 'No persistent Android release key; cannot produce AnkiDroid production update'
+            exit 0
+          fi
+          export KEYSTOREPATH="$RUNNER_TEMP/ankidroid-release.jks"
+          if [ -n "$SIGNING_BUNDLE" ]; then
+            python3 - <<'PYSECRET'
+          import base64,json,os,pathlib
+          bundle=json.loads(base64.b64decode(os.environ['SIGNING_BUNDLE'],validate=True))
+          pathlib.Path(os.environ['KEYSTOREPATH']).write_bytes(base64.b64decode(bundle['keystore_base64'],validate=True))
+          pathlib.Path(os.environ['RUNNER_TEMP'],'apk-store-password').write_text(bundle['store_password'])
+          pathlib.Path(os.environ['RUNNER_TEMP'],'apk-key-password').write_text(bundle['key_password'])
+          pathlib.Path(os.environ['RUNNER_TEMP'],'apk-key-alias').write_text(bundle['alias'])
+          PYSECRET
+            export KEYSTOREPWD="$(cat "$RUNNER_TEMP/apk-store-password")"
+            export KEYPWD="$(cat "$RUNNER_TEMP/apk-key-password")"
+            export KEYALIAS="$(cat "$RUNNER_TEMP/apk-key-alias")"
+          else
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTOREPATH"
+            export KEYSTOREPWD="$ANDROID_STORE_PASSWORD" KEYPWD="$ANDROID_KEY_PASSWORD" KEYALIAS="$ANDROID_KEY_ALIAS"
+          fi
+          trap 'rm -f "$KEYSTOREPATH" "$RUNNER_TEMP/apk-store-password" "$RUNNER_TEMP/apk-key-password" "$RUNNER_TEMP/apk-key-alias"' EXIT
+          python3 ankidroid_bridge/apply.py ankidroid-upstream
+          printf 'enable_coverage=false\nenable_leak_canary=false\n' > ankidroid-upstream/local.properties
+          (cd ankidroid-upstream && MINIFY_ENABLED=false bash gradlew --no-daemon :AnkiDroid:assembleFullRelease -Duniversal-apk=true -Dorg.gradle.jvmargs=-Xmx4g)
+          mapfile -t apks < <(find ankidroid-upstream/AnkiDroid/build/outputs/apk/full/release -type f -name '*universal*.apk')
+          if [ "${#apks[@]}" -ne 1 ]; then
+            echo 'Exactly one production AnkiDroid Companion universal APK is required' >&2
+            exit 1
+          fi
+          apk="${apks[0]}"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$apk"
+          signer="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr '[:upper:]' '[:lower:]')"
+          if [ "$signer" != 'c6a5e9f1804fdf1083c69e36e03e3a424a0e630e357b573d8a523eea09cea004' ]; then
+            echo 'Modified AnkiDroid production signing certificate differs from stable key' >&2
+            exit 1
+          fi
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | grep -q "package: name='com.ichi2.anki.companion'"
+          mkdir -p candidate
+          cp "$apk" candidate/AnkiDroid-Companion-Android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-ankidroid
+          if-no-files-found: ignore
+          path: candidate/AnkiDroid-Companion-Android.apk
   windows:
     if: github.ref == 'refs/heads/main'
     environment: signing
@@ -133,7 +205,7 @@ jobs:
           name: signed-windows
           path: packages/AnkiCompanion-Windows-Setup.exe
   assemble:
-    needs: [android, windows]
+    needs: [android, ankidroid, windows]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -159,9 +231,40 @@ jobs:
       # Publishing is an explicit dispatch choice, not an automatic side effect
       # of committing source code. Only the exact signed and hashed candidate
       # is eligible for publication.
+  signed-upgrade:
+    needs: [assemble]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-release-candidate
+          path: candidate
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: bash scripts/check_signed_android_upgrade.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: signed-android-upgrade-evidence
+          path: test-results/signed-upgrade/
   publish:
     if: inputs.publish
-    needs: [assemble]
+    needs: [assemble, signed-upgrade]
     permissions:
       contents: write
     runs-on: ubuntu-24.04
@@ -184,7 +287,8 @@ jobs:
           assert manifest['build'] == int(os.environ['EXPECTED_BUILD'])
           assert manifest['commit'] == os.environ['EXPECTED_COMMIT']
           assert {'windows', 'source'}.issubset(manifest['assets'])
-          assert set(manifest['assets']).issubset({'android','windows','source'})
+          assert set(manifest['assets']).issubset({'android','ankidroid','windows','source'})
+          assert ('android' in manifest['assets']) == ('ankidroid' in manifest['assets']), 'Both Android packages must be signed together'
           for platform, item in manifest['assets'].items():
               source = folder/item['filename']
               assert source.is_file() and source.stat().st_size == item['size'], platform
@@ -204,8 +308,11 @@ jobs:
             exit 1
           fi
           assets=(candidate/AnkiCompanion-Windows-Setup.exe candidate/AnkiCompanion-source.zip candidate/update.json)
-          if [ -f candidate/AnkiCompanion-Android.apk ]; then
-            assets+=(candidate/AnkiCompanion-Android.apk)
+          if [ -f candidate/AnkiCompanion-Android.apk ] && [ -f candidate/AnkiDroid-Companion-Android.apk ]; then
+            assets+=(candidate/AnkiCompanion-Android.apk candidate/AnkiDroid-Companion-Android.apk)
+          elif [ -f candidate/AnkiCompanion-Android.apk ] || [ -f candidate/AnkiDroid-Companion-Android.apk ]; then
+            echo 'Android release requires both production-signed APKs' >&2
+            exit 1
           fi
           gh release create "$tag" "${assets[@]}" --target "$GITHUB_SHA" --title "AnkiCompanion $tag" --notes "GitHub checksum-verified Windows update. Android in-place updates are included when a persistent Android release signing key is configured." --latest
 

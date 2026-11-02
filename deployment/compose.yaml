@@ -1,0 +1,61 @@
+# Persistent, TLS-terminated AnkiCompanion coordination server.
+# A cloud/VPS host remains on when the owner's Windows laptop is powered off.
+# The /data volume is deliberately EXTERNAL: docker compose down -v cannot erase it.
+name: ankicompanion
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: ankicompanion-server:local
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    environment:
+      ANKI_COMPANION_DATA: /data
+      ANKI_COMPANION_SKIN: study_companion
+    volumes:
+      - ankicompanion_data:/data:rw
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8765/health',timeout=2).status==200"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+  gateway:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      COMPANION_DOMAIN: ${COMPANION_DOMAIN:?Set a DNS name for the host}
+      ACME_EMAIL: ${ACME_EMAIL:?Set your certificate contact email}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [public, internal]
+    security_opt:
+      - no-new-privileges:true
+networks:
+  public: {}
+  internal:
+    internal: true
+volumes:
+  ankicompanion_data:
+    external: true
+    name: ankicompanion_data
+  caddy_data:
+    name: ankicompanion_caddy_data
+  caddy_config:
+    name: ankicompanion_caddy_config

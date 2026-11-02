@@ -12,6 +12,41 @@ class Outbox(context:Context):SQLiteOpenHelper(context,"reviews.db",null,1) {
         db.execSQL("CREATE TABLE events(id TEXT PRIMARY KEY,payload TEXT NOT NULL,timestamp INTEGER NOT NULL,sent INTEGER NOT NULL DEFAULT 0,undone INTEGER NOT NULL DEFAULT 0,undo_sent INTEGER NOT NULL DEFAULT 0)")
     }
     override fun onUpgrade(db:SQLiteDatabase,old:Int,new:Int) {}
+    fun exportTransfer():JSONArray {
+        val entries=JSONArray()
+        readableDatabase.rawQuery("SELECT id,payload,timestamp,sent,undone,undo_sent FROM events ORDER BY timestamp",null).use {c->
+            while(c.moveToNext()) {
+                require(entries.length()<250_000){"Too many local review events for recovery"}
+                entries.put(JSONObject().put("id",c.getString(0)).put("payload",JSONObject(c.getString(1)))
+                    .put("timestamp",c.getLong(2)).put("sent",c.getInt(3))
+                    .put("undone",c.getInt(4)).put("undo_sent",c.getInt(5)))
+            }
+        }
+        return entries
+    }
+    fun restoreTransfer(entries:JSONArray) {
+        require(entries.length()<=250_000){"Recovery contains too many review events"}
+        val db=writableDatabase
+        db.beginTransaction()
+        try {
+            for(i in 0 until entries.length()) {
+                val event=entries.getJSONObject(i)
+                val id=event.getString("id")
+                require(id.length in 1..250 && !id.contains('/')){"Invalid recovery review ID"}
+                val payload=event.getJSONObject("payload").toString()
+                require(payload.length<=64*1024){"Review event too large"}
+                val sent=event.getInt("sent");val undone=event.getInt("undone")
+                val undoSent=event.getInt("undo_sent")
+                require(sent in 0..1 && undone in 0..1 && undoSent in 0..1){"Invalid event delivery flags"}
+                val args=arrayOf(id,payload,event.getLong("timestamp"),sent,undone,undoSent)
+                db.execSQL("INSERT OR IGNORE INTO events(id,payload,timestamp,sent,undone,undo_sent) VALUES(?,?,?,?,?,?)",args)
+                // Never mark an existing unsent event delivered during merge.
+                db.execSQL("UPDATE events SET sent=MIN(sent,?), undone=MAX(undone,?), undo_sent=MIN(undo_sent,?) WHERE id=?",
+                    arrayOf(sent,undone,undoSent,id))
+            }
+            db.setTransactionSuccessful()
+        } finally {db.endTransaction()}
+    }
     fun scan(context:Context,store:Storage,canRetract:Boolean=false) {
         val floor=System.currentTimeMillis()-370L*86400000
         val cursor=store.getSetting("history_cursor",floor.toString()).toLongOrNull() ?: floor
@@ -73,11 +108,14 @@ class Outbox(context:Context):SQLiteOpenHelper(context,"reviews.db",null,1) {
         if(items.size<1000)store.setSetting("backfill_pending","false")
         if(items.isNotEmpty())store.setSetting("history_cursor",(items.last().getLong("revlog_id")+1).toString())
     }
-    fun send(api:Api,deviceId:String) {
+    fun send(api:Api,deviceId:String,store:Storage) {
         val pending=mutableListOf<Pair<String,JSONObject>>()
         readableDatabase.rawQuery("SELECT id,payload FROM events WHERE sent=0 ORDER BY timestamp DESC LIMIT 1000",null).use {c->while(c.moveToNext())pending.add(c.getString(0) to JSONObject(c.getString(1)))}
         if(pending.isNotEmpty()) {
-            api.json("/v1/events","POST",JSONObject().put("device_id",deviceId).put("events",JSONArray(pending.map{it.second})))
+            val receipt=api.json("/v1/events","POST",JSONObject().put("device_id",deviceId).put("events",JSONArray(pending.map{it.second})))
+            val collection=store.connection()?.optString("collection_id","primary") ?: "primary"
+            val ticket=receipt.optJSONObject("native_upload_tickets")?.optString(collection,"") ?: ""
+            if(ticket.isNotEmpty())store.setSetting("native_upload_ticket",ticket)
             for(item in pending)writableDatabase.execSQL("UPDATE events SET sent=1 WHERE id=?",arrayOf(item.first))
         }
         val undone=mutableListOf<String>()

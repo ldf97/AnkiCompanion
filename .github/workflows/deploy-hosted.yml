@@ -1,0 +1,59 @@
+name: Deploy always-on AnkiCompanion server
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tested source commit or tag to deploy
+        required: false
+        type: string
+  # Deliberately no automatic push deploy: cloud deployment needs tested
+  # release approval and a valid persistent server/token migration.
+permissions:
+  contents: read
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    environment: hosted-production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Verify deployment configuration and prepare SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          COMPANION_DOMAIN: ${{ secrets.COMPANION_DOMAIN }}
+          ACME_EMAIL: ${{ secrets.ACME_EMAIL }}
+        run: |
+          set -euo pipefail
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS COMPANION_DOMAIN ACME_EMAIL; do
+            test -n "${!name}" || { echo "Required deployment secret $name is missing" >&2; exit 1; }
+          done
+          mkdir -m 700 -p "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          printf 'COMPANION_DOMAIN=%s\nACME_EMAIL=%s\n' "$COMPANION_DOMAIN" "$ACME_EMAIL" > deployment/.env
+          chmod 600 deployment/.env
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
+            'docker info >/dev/null && docker compose version >/dev/null && docker volume inspect ankicompanion_data >/dev/null'
+          echo "DEPLOY_REMOTE=$DEPLOY_USER@$DEPLOY_HOST" >> "$GITHUB_ENV"
+      - name: Transfer source and restart without resetting server data
+        run: |
+          set -euo pipefail
+          # Transfer only tracked source; secrets, private artwork and Android
+          # signing backups are NEVER in the repository or deployment tar.
+          git archive --format=tar HEAD | ssh -o BatchMode=yes "$DEPLOY_REMOTE" \
+            'mkdir -p "$HOME/ankicompanion" && tar xf - -C "$HOME/ankicompanion"'
+          scp -q deployment/.env "$DEPLOY_REMOTE:ankicompanion/deployment/.env"
+          ssh -o BatchMode=yes "$DEPLOY_REMOTE" \
+            'cd "$HOME/ankicompanion/deployment" && docker compose --env-file .env -f compose.yaml up --build -d --wait --remove-orphans'
+      - name: Validate public HTTPS and bearer authentication
+        env:
+          COMPANION_DOMAIN: ${{ secrets.COMPANION_DOMAIN }}
+        run: |
+          set -euo pipefail
+          python scripts/check_hosted.py "https://$COMPANION_DOMAIN"

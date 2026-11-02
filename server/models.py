@@ -39,6 +39,7 @@ class Snapshot(Strict):
     collection_id: str = Field(default='primary', min_length=1, max_length=100, pattern=r'^[A-Za-z0-9_-]+$')
     applied_revision: int = Field(default=0, ge=0)
     native_generation: int = Field(default=0, ge=0)
+    native_upload_ticket: str = Field(default='', max_length=64, pattern=r'^(?:[0-9a-f]{32})?$')
     label: str = Field(min_length=1, max_length=100)
     decks: list[Deck] = Field(max_length=10000)
     sync_status: str = Field(default='unknown',max_length=300)

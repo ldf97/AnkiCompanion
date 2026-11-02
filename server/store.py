@@ -31,8 +31,12 @@ class Store:
                 PRIMARY KEY(collection,device));
             CREATE TABLE IF NOT EXISTS sync_pending(collection TEXT NOT NULL, device TEXT NOT NULL,
                 dirty INTEGER NOT NULL DEFAULT 0, latest_event_ms INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY(collection,device));
+                ticket TEXT NOT NULL DEFAULT '', PRIMARY KEY(collection,device));
             ''')
+            # Add the ticket to existing deployments without erasing histories.
+            cols={row['name'] for row in db.execute('PRAGMA table_info(sync_pending)')}
+            if 'ticket' not in cols:
+                db.execute("ALTER TABLE sync_pending ADD COLUMN ticket TEXT NOT NULL DEFAULT ''")
             db.execute('INSERT OR IGNORE INTO meta VALUES (?,?)', ('settings', Settings(revision=0).model_dump_json()))
             db.execute('INSERT OR IGNORE INTO meta VALUES (?,?)', ('seed', secrets.token_hex(24)))
 
@@ -121,12 +125,19 @@ class Store:
                 self._day(db, day, packs)
                 undone = bool(db.execute('SELECT 1 FROM tombstones WHERE id=?', (event.key,)).fetchone())
                 db.execute('INSERT INTO events VALUES (?,?,?,?,?)', (event.key, payload, day, event.duration_ms, int(undone)))
-                db.execute('''INSERT INTO sync_pending(collection,device,dirty,latest_event_ms) VALUES(?,?,1,?)
-                    ON CONFLICT(collection,device) DO UPDATE SET
-                    dirty=1,latest_event_ms=MAX(sync_pending.latest_event_ms,excluded.latest_event_ms)''',
-                    (event.collection_id,device_id,event.revlog_id))
+                ticket=secrets.token_hex(16)
+                db.execute('''INSERT INTO sync_pending(collection,device,dirty,latest_event_ms,ticket)
+                    VALUES(?,?,1,?,?) ON CONFLICT(collection,device) DO UPDATE SET
+                    dirty=1,latest_event_ms=MAX(sync_pending.latest_event_ms,excluded.latest_event_ms),
+                    ticket=excluded.ticket''',
+                    (event.collection_id,device_id,event.revlog_id,ticket))
                 inserted += 1
-            return dict(inserted=inserted, received=len(events))
+            tickets={}
+            for collection in {event.collection_id for event in events}:
+                row=db.execute('SELECT ticket FROM sync_pending WHERE collection=? AND device=? AND dirty=1',
+                               (collection,device_id)).fetchone()
+                if row and row['ticket']:tickets[collection]=row['ticket']
+            return dict(inserted=inserted, received=len(events),native_upload_tickets=tickets)
 
     def retract(self, ids, device_id='unknown', now_ms=None):
         # Removing a review also changes its native collection scheduling;
@@ -140,10 +151,12 @@ class Store:
                 row=db.execute('SELECT payload FROM events WHERE id=?',(identity,)).fetchone()
                 if row:
                     collection=json.loads(row['payload'])['collection_id']
-                    db.execute('''INSERT INTO sync_pending(collection,device,dirty,latest_event_ms) VALUES(?,?,1,?)
-                        ON CONFLICT(collection,device) DO UPDATE SET
-                        dirty=1,latest_event_ms=MAX(sync_pending.latest_event_ms,excluded.latest_event_ms)''',
-                        (collection,device_id,now_ms))
+                    ticket=secrets.token_hex(16)
+                    db.execute('''INSERT INTO sync_pending(collection,device,dirty,latest_event_ms,ticket)
+                        VALUES(?,?,1,?,?) ON CONFLICT(collection,device) DO UPDATE SET
+                        dirty=1,latest_event_ms=MAX(sync_pending.latest_event_ms,excluded.latest_event_ms),
+                        ticket=excluded.ticket''',
+                        (collection,device_id,now_ms,ticket))
 
     def snapshot(self, snapshot, now_ms):
         with self.tx() as db:
@@ -155,12 +168,15 @@ class Store:
             if snapshot.sync_status in ('synced','native Anki sync') and snapshot.collection_synced_ms>0:
                 pending=db.execute('SELECT * FROM sync_pending WHERE collection=? AND device=?',
                                    (collection,snapshot.device_id)).fetchone()
-                # Do not tell other devices to pull until AnkiWeb has the update.
-                # A stale "synced" snapshot must not clear an unfinished source outbox.
-                if pending and pending['dirty'] and snapshot.collection_synced_ms>=pending['latest_event_ms']:
+                # Native-sync tickets prove that THIS source's event batch had
+                # reached AnkiWeb. Wall-clock timestamps cannot prove this:
+                # phone/laptop/server clocks can disagree or native sync can
+                # complete before the event reaches the companion server.
+                if (pending and pending['dirty'] and pending['ticket'] and
+                        secrets.compare_digest(snapshot.native_upload_ticket,pending['ticket'])):
                     current+=1
                     db.execute('UPDATE sync_versions SET revision=? WHERE collection=?',(current,collection))
-                    db.execute('UPDATE sync_pending SET dirty=0 WHERE collection=? AND device=?',
+                    db.execute("UPDATE sync_pending SET dirty=0,ticket='' WHERE collection=? AND device=?",
                                (collection,snapshot.device_id))
                     # The origin already has its own reviews. No redundant ping.
                     db.execute('''INSERT INTO sync_receipts VALUES (?,?,?)
@@ -181,8 +197,11 @@ class Store:
             receipt=db.execute('SELECT applied_revision FROM sync_receipts WHERE collection=? AND device=?',
                                (collection_id,device_id)).fetchone()
             applied=int(receipt[0]) if receipt else 0
+            outgoing=db.execute('SELECT ticket FROM sync_pending WHERE collection=? AND device=? AND dirty=1',
+                                (collection_id,device_id)).fetchone()
             return {'collection_id':collection_id,'revision':latest,
-                    'applied_revision':applied,'pending':latest>applied}
+                    'applied_revision':applied,'pending':latest>applied,
+                    'outgoing_ticket':outgoing['ticket'] if outgoing else ''}
 
     def state(self, packs, now_ms):
         with self.tx() as db:
