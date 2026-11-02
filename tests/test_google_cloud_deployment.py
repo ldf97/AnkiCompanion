@@ -21,6 +21,7 @@ def test_gce_startup_refuses_blank_migration_and_formats_only_unformatted_disks(
     assert 'mount_existing_or_blank_disk ankicompanion-data' in s
     assert 'mount_existing_or_blank_disk ankicompanion-backups' in s
     assert 'if ! blkid' in s and "mkfs.ext4" in s
+    assert "wipefs --no-act" in s and "Refusing to format" in s
     assert 'docker volume inspect' in s
     assert 'git fetch --depth 1 origin' in s
     assert 'git rev-parse HEAD' in s

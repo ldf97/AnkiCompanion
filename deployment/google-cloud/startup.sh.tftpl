@@ -3,7 +3,7 @@ set -euo pipefail
 exec >>/var/log/ankicompanion-bootstrap.log 2>&1
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq ca-certificates curl gnupg git e2fsprogs
+apt-get install -y -qq ca-certificates curl gnupg git e2fsprogs util-linux
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
@@ -27,7 +27,13 @@ mount_existing_or_blank_disk() {
   [ -b "$disk" ] || { echo "Missing persistent disk $disk"; exit 1; }
   mkdir -p "$mountpoint"
   if ! blkid "$disk" >/dev/null 2>&1; then
-    mkfs.ext4 -F "$disk" # only genuinely unformatted disks
+    # An unreadable/corrupted existing filesystem is NOT a blank disk.
+    # Refuse to format if any filesystem signature or first-MiB payload exists.
+    if [ -n "$(wipefs --no-act "$disk")" ] || [ -n "$(dd if="$disk" bs=1M count=1 status=none | tr -d '\000')" ]; then
+      echo "Refusing to format $disk: existing data or an unrecognized filesystem may be present" >&2
+      exit 1
+    fi
+    mkfs.ext4 -F "$disk"
   fi
   local uuid
   uuid=$(blkid -s UUID -o value "$disk")
