@@ -85,3 +85,11 @@ def test_windows_launcher_isolation_handles_missing_optional_aqt_api(monkeypatch
     spec.loader.exec_module(instance)
     assert len(fake.gui_hooks.profile_did_open)==1
     fake.gui_hooks.profile_did_open[0]()
+
+def test_windows_real_aqt_smoke_disables_only_invisible_first_run_lang_modal():
+    from pathlib import Path
+    script=(Path(__file__).resolve().parents[1]/'scripts/ci_windows_anki_launcher.py').read_text()
+    assert 'ProfileManager.setDefaultLang = choose_ci_language' in script
+    assert 'manager.setLang("en")' in script
+    assert "app=aqt._run(" in script
+    assert 'faulthandler.dump_traceback_later' in script

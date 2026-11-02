@@ -199,3 +199,45 @@ def test_restart_reuses_token_settings_streak_and_private_skin(tmp_path):
         assert after["streak"]==before["streak"]
         assert after["lineup"]==before["lineup"]
     assert __import__("hashlib").sha256(skin_json.read_bytes()).hexdigest()==artwork_hash
+
+def test_authenticated_paginated_review_audit_retains_true_source_and_schema(client):
+    items=[dict(event(i,1000,i+1),rating=4,interval=3,previous_interval=0)
+           for i in range(4)]
+    assert client.get('/v1/events/audit',headers={'Authorization':'Bearer wrong'}).status_code==401
+    assert client.post('/v1/events',json={'device_id':'phone','events':items}).json()['inserted']==4
+    assert client.post('/v1/events',json={'device_id':'laptop','events':items}).json()['inserted']==0
+    first=client.get('/v1/events/audit?limit=2').json()
+    assert len(first['events'])==2 and first['next_cursor']
+    assert first['events'][0]['schema_version']==1
+    assert first['events'][0]['origin_device_id']=='phone'
+    assert set(first['events'][0]['observed_on_devices'])=={'phone','laptop'}
+    assert first['events'][0]['rating']==4 and first['events'][0]['interval']==3
+    assert first['events'][0]['study_day']=='2026-10-29'
+    second=client.get('/v1/events/audit',params={'after':first['next_cursor'],'limit':2}).json()
+    assert len(second['events'])==2 and second['next_cursor'] is None
+    ids=[row['id'] for row in first['events']+second['events']]
+    assert ids==sorted(set(ids))
+    assert client.get('/v1/events/audit?limit=10000').status_code==400
+
+
+def test_large_review_history_pages_without_duplicate_answers(client):
+    # Three thousand distinct Anki review IDs, deliberately retried by a
+    # second device in descending order. Cursor pages must be stable.
+    events=[event(i,2000,i+1) for i in range(3000)]
+    for part in range(0,len(events),1000):
+        assert client.post('/v1/events',json={
+            'device_id':'phone','events':events[part:part+1000]}).json()['inserted']==1000
+    for part in range(0,len(events),1000):
+        assert client.post('/v1/events',json={
+            'device_id':'laptop','events':list(reversed(events[part:part+1000]))}).json()['inserted']==0
+    seen=set();cursor=''
+    while True:
+        result=client.get('/v1/events/audit',params={'after':cursor,'limit':500}).json()
+        for row in result['events']:
+            assert row['id'] not in seen
+            seen.add(row['id'])
+        if result['next_cursor'] is None:break
+        assert result['next_cursor']>cursor
+        cursor=result['next_cursor']
+    assert len(seen)==3000
+    assert client.get('/v1/state').json()['progress']['answers']==3000

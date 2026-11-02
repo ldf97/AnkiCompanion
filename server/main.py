@@ -86,6 +86,11 @@ def create_app(data_dir=None, token=None, clock=None):
         except Conflict: raise
         except ValueError as exc: raise HTTPException(400,str(exc)) from exc
 
+    @api.get('/v1/events/audit', dependencies=[Depends(auth)])
+    def event_audit(after:str='',limit:int=100):
+        try: return store.audit_events(after,limit)
+        except ValueError as exc: raise HTTPException(400,str(exc)) from exc
+
     @api.post('/v1/events/retract', dependencies=[Depends(auth)])
     def retract(body: Retractions):
         try: store.retract(body.ids,body.device_id,now())

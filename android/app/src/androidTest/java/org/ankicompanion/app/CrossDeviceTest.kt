@@ -51,17 +51,12 @@ class CrossDeviceTest {
             host.addView(widgetView,FrameLayout.LayoutParams((320*dp).toInt(),(160*dp).toInt(),Gravity.CENTER))
             // System-delivered AppWidgetHostView updates work without putting
             // a companion Activity on-screen, even while AnkiDroid is foreground.
-            // Background test instruments do not have a visible Activity.
-            // Android 14+/15 reject foreground-service starts from a normal
-            // background app. The emulator-only shell has explicit test
-            // privileges; production still requires a foreground user action.
-            val command="am start-foreground-service -n "+context.packageName+"/.LiveSyncService"
-            instrumentation.uiAutomation.executeShellCommand(command).use { descriptor ->
-                java.io.FileInputStream(descriptor.fileDescriptor).bufferedReader().use { output ->
-                    val result=output.readText()
-                    assertFalse("Could not start test live sync: "+result,result.contains("Error:"))
-                }
-            }
+            // AnkiDroid's simultaneous instrumentation owns UiAutomation.
+            // A second UiAutomation client would crash the acceptance test.
+            // A foreground-service start is permitted in this test's live
+            // instrumented study session; production separately catches OS
+            // background-start restrictions and schedules a retry.
+            LiveSyncService.start(context)
         }
         signal("observer-ready")
         val evidence=File(context.getExternalFilesDir(null),"evidence");evidence.mkdirs()

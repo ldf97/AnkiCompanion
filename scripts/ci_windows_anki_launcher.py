@@ -41,6 +41,14 @@ def smoke():
         # decisively rather than burning the entire 12-minute Windows job.
         faulthandler.enable()
         faulthandler.dump_traceback_later(75, repeat=False, exit=True)
+        # The upstream Anki 26.09.3 first-run language selector is a
+        # QDialog.exec() modal. It is invisible under Qt offscreen rendering
+        # and cannot be dismissed by a Windows CI agent. Seed English in this
+        # disposable test profile; do NOT modify installed Anki or user files.
+        from aqt.profiles import ProfileManager
+        def choose_ci_language(manager, index):
+            manager.setLang("en")
+        ProfileManager.setDefaultLang = choose_ci_language
         print("Starting isolated Anki GUI with companion bridge",flush=True)
         app=aqt._run(['anki','-b',str(roaming/'Anki2'),'-l','en'],exec=False)
         if app is None or aqt.mw is None:

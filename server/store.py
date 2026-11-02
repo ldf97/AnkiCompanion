@@ -102,7 +102,9 @@ class Store:
             for event in events:
                 if event.revlog_id > now_ms + 300_000: raise ValueError('Review event is in the future')
                 if event.revlog_id < 946684800000: raise ValueError('Invalid review timestamp')
-                payload = event.model_dump_json()
+                # The server is authoritative for the original source device:
+                # untrusted clients cannot claim another origin in their event.
+                payload = json.dumps(dict(event.model_dump(), origin_device_id=device_id))
                 db.execute('INSERT OR REPLACE INTO event_sources VALUES (?,?,?)',(event.key,device_id,now_ms))
                 row = db.execute('SELECT payload FROM events WHERE id=?', (event.key,)).fetchone()
                 if row:
@@ -138,6 +140,38 @@ class Store:
                                (collection,device_id)).fetchone()
                 if row and row['ticket']:tickets[collection]=row['ticket']
             return dict(inserted=inserted, received=len(events),native_upload_tickets=tickets)
+
+
+    def audit_events(self, after='', limit=100):
+        """Stable, paginated review audit with all reporting devices.
+
+        This is authenticated by the route. Native Anki remains the source
+        of scheduling; returned events are recorded review evidence only.
+        """
+        if len(after)>250 or not 1<=limit<=500:
+            raise ValueError('Invalid audit cursor or page length')
+        with self.tx() as db:
+            rows=db.execute(
+                'SELECT id,payload,day,retracted FROM events WHERE id>? ORDER BY id LIMIT ?',
+                (after,limit+1)).fetchall()
+            selected=rows[:limit]
+            identities=[r['id'] for r in selected]
+            sources={key:[] for key in identities}
+            if identities:
+                marks=','.join('?' for _ in identities)
+                for source in db.execute(
+                    f'SELECT id,device FROM event_sources WHERE id IN ({marks}) ORDER BY seen_ms,device',
+                    identities):
+                    sources[source['id']].append(source['device'])
+            events=[]
+            for row in selected:
+                value=json.loads(row['payload'])
+                value.setdefault('schema_version',1)
+                value.setdefault('origin_device_id',sources[row['id']][0] if sources[row['id']] else 'unknown')
+                value.update(id=row['id'],study_day=row['day'],retracted=bool(row['retracted']),
+                             observed_on_devices=sources[row['id']])
+                events.append(value)
+            return dict(events=events,next_cursor=selected[-1]['id'] if len(rows)>limit else None)
 
     def retract(self, ids, device_id='unknown', now_ms=None):
         # Removing a review also changes its native collection scheduling;

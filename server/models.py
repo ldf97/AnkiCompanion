@@ -8,6 +8,7 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
 
 class Event(Strict):
+    schema_version: Literal[1] = 1
     collection_id: str = Field(min_length=1, max_length=100, pattern=r'^[A-Za-z0-9_-]+$')
     revlog_id: int = Field(gt=0)
     card_id: int = Field(gt=0)
