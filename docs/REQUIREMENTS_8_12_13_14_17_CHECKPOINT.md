@@ -13,11 +13,12 @@ Date: 2026-11-02. User-confirmed behavior: native undo must synchronize, but stu
 - Windows online handoff defers until native revision is current, and handles initial/full-sync direction conflicts with bounded exponential retry instead of repeated background loops.
 - Android JobScheduler uses retry/backoff, refreshes state after native sync, and distinguishes automatic transient failures from full-sync conflicts.
 - Three-device server notifications, undo idempotency, out-of-order send, previous-day streak retention and Windows optional hook isolation covered in tests.
+- Android `UndoAccountabilityTest.kt` instrumentation verifies undone attempts still complete an offline daily lesson, keep the streak and deduplicate recovery retries on actual Android runtime.
 
 ## Tests
 - Local `python -m pytest -q tests --ignore=tests/test_native_anki.py --disable-warnings --maxfail=1`: 129 passed, 1 skipped.
 - `python -m compileall -q anki_addon server companion desktop tests`: PASS.
-- Native Anki and Android tests require GitHub CI (local system has no installed native Anki/Android SDK); these source changes are not yet CI-verified.
+- Native Anki and Android instrumentation require GitHub CI (local system has no installed native Anki/Android SDK); these source changes are not yet CI-verified.
 
 ## Honest limits
 - <5 sec was established previously for local long-poll dispatch, not end-to-end native scheduling across WAN, doze, or Android lifecycle.
