@@ -117,6 +117,10 @@ jobs:
             if ($before[$i] -ne $after[$i]) { throw "Installed update changed private data file: $($pathList[$i])" }
           }
           Write-Host 'PASS: repeated Windows installer preserved original SQLite, token and private artwork without a restore.'
+      - name: Launch actual installed Windows companion desktop after in-place installer update
+        timeout-minutes: 3
+        shell: pwsh
+        run: python scripts/ci_windows_installed_app.py
       - name: Launch real Anki 26.9.3 with AnkiCompanion on isolated Windows 11 x64 profile
         timeout-minutes: 5
         shell: pwsh
@@ -246,8 +250,36 @@ jobs:
           profile: pixel_6
           disable-animations: false
           script: bash scripts/check_cross_device.sh
+      - name: Assert native card scheduling and both real widget checkpoints
+        run: python scripts/assert_cross_device_evidence.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: cross-device-acceptance-evidence
           path: test-results/cross-device/
+
+  acceptance:
+    needs: [python, android, ankidroid, gcp-infrastructure, windows, emulator, cross-device]
+    runs-on: ubuntu-24.04
+    if: always()
+    steps:
+      - name: Gate complete installed-app and native cross-device acceptance
+        shell: bash
+        run: |
+          results=(
+            "${{ needs.python.result }}"
+            "${{ needs.android.result }}"
+            "${{ needs.ankidroid.result }}"
+            "${{ needs['gcp-infrastructure'].result }}"
+            "${{ needs.windows.result }}"
+            "${{ needs.emulator.result }}"
+            "${{ needs.cross-device.result }}"
+          )
+          printf 'Acceptance results: %s\n' "${results[*]}"
+          for result in "${results[@]}"; do
+            if [ "$result" != 'success' ]; then
+              echo "Refusing acceptance: required CI job did not pass ($result)" >&2
+              exit 1
+            fi
+          done
+          echo 'PASS: entire installed app + native cross-device suite is green'
