@@ -94,6 +94,7 @@ def test_container_startup_captures_existing_state_before_any_schema_migration(t
     from server.launch import prepare_hosted_start
     from server.backup import verify_snapshot
     data=tmp_path/"data";backups=tmp_path/"backups"
+    backups.mkdir()
     create_app(data)
     monkeypatch.setenv("ANKI_COMPANION_DATA",str(data))
     monkeypatch.setenv("ANKI_COMPANION_BACKUPS",str(backups))
