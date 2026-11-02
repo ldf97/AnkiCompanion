@@ -129,23 +129,26 @@ def find_original_eren():
 
 
 def recover_eren(client):
-    """Import/activate the exact owner's original pack, if already on their PC."""
+    """Recover the original pack once without changing later dropdown choices."""
     installed = client.request("/v1/skins")
     exists = any(s["id"] == "eren_anki" and s["version"] == "1.0.0"
                  for s in installed.get("skins", []))
-    if not exists:
-        data = find_original_eren()
-        if data is None:
-            return "Original Eren ZIP was not found among files already on this PC"
-        imported = client.request("/v1/skins/import", "POST", data,
-                                  content_type="application/zip")
-        if imported.get("id") != "eren_anki":
-            raise RuntimeError("The original Eren skin was rejected by the server")
+    if exists:
+        return "Eren artwork available; selected skin preserved"
+    data = find_original_eren()
+    if data is None:
+        return "Original Eren ZIP was not found among files already on this PC"
+    imported = client.request("/v1/skins/import", "POST", data,
+                              content_type="application/zip")
+    if imported.get("id") != "eren_anki":
+        raise RuntimeError("The original Eren skin was rejected by the server")
     settings = client.request("/v1/settings")
-    if (settings["skin_id"], settings["skin_version"]) != ("eren_anki", "1.0.0"):
+    # First import activates Eren only for untouched neutral defaults.
+    if settings.get("skin_id") in (None, "", "study_companion"):
         settings.update(skin_id="eren_anki", skin_version="1.0.0")
         client.request("/v1/settings", "PUT", settings)
-    return "Eren artwork activated"
+        return "Eren artwork activated"
+    return "Eren artwork imported; selected skin preserved"
 
 
 def addon_archive():

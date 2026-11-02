@@ -49,7 +49,7 @@ def test_previously_imported_eren_needs_no_private_file(monkeypatch):
             if path=="/v1/settings":return {"skin_id":"eren_anki","skin_version":"1.0.0"}
             raise AssertionError("Unexpected alteration")
     monkeypatch.setattr(setup,"find_original_eren",lambda: (_ for _ in ()).throw(AssertionError("Should not need ZIP")))
-    assert setup.recover_eren(Client())=="Eren artwork activated"
+    assert setup.recover_eren(Client())=="Eren artwork available; selected skin preserved"
 
 
 def test_pairing_uses_existing_live_relay_without_spawning_a_new_process(tmp_path,monkeypatch):
@@ -69,3 +69,35 @@ def test_private_pairing_never_returns_http_or_unauthorized_url(tmp_path,monkeyp
     assert setup._existing_pairing("new-token") is None
     (tmp_path/"pairing-link.txt").write_text("https://not-cloudflare.example?token=secret")
     assert setup._existing_pairing("new-token") is None
+
+
+def test_relaunch_does_not_override_existing_custom_skin():
+    class Client:
+        def request(self, path, method="GET", data=None, **kwargs):
+            if path == "/v1/skins":
+                return {"skins": [{"id": "eren_anki", "version": "1.0.0"},
+                                  {"id": "new_custom", "version": "2.0.0"}]}
+            raise AssertionError("Bootstrap must not rewrite custom skin selection")
+    assert "selected skin preserved" in setup.recover_eren(Client())
+
+
+def test_first_eren_import_preserves_already_selected_custom_skin(monkeypatch):
+    monkeypatch.setattr(setup, "find_original_eren", lambda: b"original-pack")
+    selected = {"skin_id": "new_custom", "skin_version": "2.0.0", "lesson_answers": 71}
+    writes = []
+    class Client:
+        def request(self, path, method="GET", data=None, **kwargs):
+            if path == "/v1/skins":
+                return {"skins": [{"id": "new_custom", "version": "2.0.0"}]}
+            if path == "/v1/skins/import":
+                assert data == b"original-pack"
+                return {"id": "eren_anki", "version": "1.0.0"}
+            if path == "/v1/settings" and method == "GET":
+                return dict(selected)
+            if path == "/v1/settings" and method == "PUT":
+                writes.append(data)
+                return data
+            raise AssertionError(path)
+    assert "selected skin preserved" in setup.recover_eren(Client())
+    assert writes == []
+    assert selected["skin_id"] == "new_custom"
