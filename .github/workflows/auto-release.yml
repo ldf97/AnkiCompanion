@@ -3,7 +3,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-  # Candidate builds are automatic; stable publication needs explicit approval.
+  # Release publish follows successful exact-SHA CI and compatible-signing checks.
+  # GitHub protected production-release environment still gates authorization.
 permissions:
   contents: read
 concurrency:
@@ -22,10 +23,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" != schedule ]; then
-            echo 'needed=true' >> "$GITHUB_OUTPUT"
-          elif [ "$SIGNING_ENABLED" != true ]; then
+          if [ "$SIGNING_ENABLED" != true ]; then
             echo 'needed=false' >> "$GITHUB_OUTPUT"
+            echo 'Production release deferred: persistent Android signing credentials are not configured.' >> "$GITHUB_STEP_SUMMARY"
           else
             release="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" 2>/dev/null || echo '{}')"
             if printf '%s' "$release" | jq -e --arg sha "$GITHUB_SHA" \
@@ -67,5 +67,5 @@ jobs:
     with:
       version: ${{ needs.version.outputs.version }}
       build: ${{ fromJSON(needs.version.outputs.build) }}
-      publish: false
+      publish: true
     secrets: inherit

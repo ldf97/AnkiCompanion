@@ -1,4 +1,4 @@
-param([int]$Port = 8765)
+param([int]$Port = 8766)
 $ErrorActionPreference = 'Stop'
 $tailscale = (Get-Command tailscale.exe -ErrorAction Stop).Source
 $state = (& $tailscale status --json | ConvertFrom-Json)

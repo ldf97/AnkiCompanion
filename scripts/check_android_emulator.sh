@@ -5,7 +5,12 @@ bash gradlew --no-daemon installDebug installDebugAndroidTest
 mkdir -p app/build/emulator-evidence
 adb shell am instrument -w org.ankicompanion.app.test/androidx.test.runner.AndroidJUnitRunner | tee app/build/emulator-evidence/instrumentation.txt
 python3 -c 'from pathlib import Path; s=Path("app/build/emulator-evidence/instrumentation.txt").read_text(); assert "OK (" in s and "FAILURES" not in s, s'
-adb pull /sdcard/Android/data/org.ankicompanion.app/files/evidence app/build/emulator-evidence/
+# Evidence copying is diagnostic only. On API28 the emulator can shut down
+# AFTER instrumentation reports OK, making adb pull fail despite passing tests.
+# Preserve the substantive instrumentation result instead of a false CI fail.
+if ! adb pull /sdcard/Android/data/org.ankicompanion.app/files/evidence app/build/emulator-evidence/; then
+  printf 'Optional evidence pull unavailable after passing instrumentation tests\n' > app/build/emulator-evidence/evidence-pull-warning.txt
+fi
 
 
 # Same-signer in-place Android upgrade acceptance, not reinstall/restore.

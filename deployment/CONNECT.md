@@ -1,6 +1,6 @@
 # Connect the devices securely
 
-1. Install the companion server on an always-on PC. The installer offers to start **AnkiCompanion Server** and an optional start-at-sign-in task. Otherwise open **AnkiCompanion Server** from Start. It binds only to `127.0.0.1:8765`; its private data is under `%LOCALAPPDATA%\AnkiCompanion\server` in packaged Windows builds.
+1. Install the companion server on an always-on PC. The installer offers to start **AnkiCompanion Server** and an optional start-at-sign-in task. Otherwise open **AnkiCompanion Server** from Start. It binds only to `127.0.0.1:8766`; its private data is under `%LOCALAPPDATA%\AnkiCompanion\server` in packaged Windows builds.
 2. Install Tailscale on the PC and Android phone and sign in to the same permitted network. Enable HTTPS when prompted by Tailscale Serve.
 3. Run `deployment/connect-tailscale.ps1` on the PC. It configures a private HTTPS endpoint and verifies `/health`. No router port forwarding is required. Do not expose the unencrypted port to the Internet.
 4. Enter the printed HTTPS address and the server's `token.txt` pairing token in **Connect** on both companion apps. Keep the token private. Both use the same collection ID, normally `primary`.
