@@ -81,7 +81,14 @@ def smoke():
         # This is a disposable CI-only process, not the user app: a normal
         # interpreter teardown can return 1 after verified GUI success.
         # Flush positive evidence and exit the isolated runner directly.
-        sys.stdout.flush();sys.stderr.flush()
+        # Modern Anki replaces sys.stderr with a GUI ErrorHandler that has
+        # no flush() method; never fail an already-passed GUI acceptance on
+        # the test runner's output-stream cleanup.
+        for stream in (sys.stdout, sys.stderr):
+            flush = getattr(stream, 'flush', None)
+            if callable(flush):
+                try:flush()
+                except Exception:pass
         os._exit(0)
 
 if __name__=='__main__':

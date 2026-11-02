@@ -130,3 +130,17 @@ def test_real_anki_hook_is_noniterable_generated_object():
     assert "getattr(review_hook, '_hooks', ())" in source
     assert 'review_hook.count() > 0' in source
     assert 'for fn in gui_hooks.reviewer_did_answer_card' not in source
+def test_windows_aniki_smoke_supports_gui_error_handler_without_flush():
+    """Anki 26.09 wraps sys.stderr with a non-file ErrorHandler."""
+    class ErrorHandler:
+        def write(self, text):pass
+    class Stream:
+        def flush(self):pass
+    streams=(Stream(),ErrorHandler())
+    for stream in streams:
+        callback=getattr(stream,'flush',None)
+        if callable(callback):callback()
+    text=(ROOT/'scripts/ci_windows_anki_launcher.py').read_text()
+    assert "getattr(stream, 'flush', None)" in text
+    assert 'sys.stderr.flush()' not in text
+    assert 'os._exit(0)' in text
