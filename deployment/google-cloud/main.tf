@@ -6,7 +6,11 @@ terraform {
   # This stores Terraform RESOURCE metadata, not live SQLite study history.
   backend "gcs" {}
 }
-provider "google" { project = var.project_id, region = var.region, zone = var.zone }
+provider "google" {
+  project = var.project_id
+  region  = var.region
+  zone    = var.zone
+}
 
 resource "google_compute_network" "net" {
   name = "ankicompanion-net"
@@ -23,8 +27,14 @@ resource "google_compute_firewall" "https" {
   network = google_compute_network.net.name
   target_tags = ["ankicompanion"]
   source_ranges = ["0.0.0.0/0"]
-  allow { protocol = "tcp", ports = ["80", "443"] }
-  allow { protocol = "udp", ports = ["443"] }
+  allow {
+    protocol = "tcp"
+    ports    = ["80", "443"]
+  }
+  allow {
+    protocol = "udp"
+    ports    = ["443"]
+  }
   # Never expose internal application port 8765.
 }
 resource "google_compute_firewall" "iap_ssh" {
@@ -32,7 +42,10 @@ resource "google_compute_firewall" "iap_ssh" {
   network = google_compute_network.net.name
   target_tags = ["ankicompanion"]
   source_ranges = ["35.235.240.0/20"]
-  allow { protocol = "tcp", ports = ["22"] }
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
 }
 resource "google_compute_address" "ip" {
   name = "ankicompanion-static-ip"
@@ -59,8 +72,16 @@ resource "google_compute_resource_policy" "snapshots" {
   name = "ankicompanion-daily"
   region = var.region
   snapshot_schedule_policy {
-    schedule { daily_schedule { days_in_cycle = 1, start_time = "04:00" } }
-    retention_policy { max_retention_days = 14, on_source_disk_delete = "KEEP_AUTO_SNAPSHOTS" }
+    schedule {
+      daily_schedule {
+        days_in_cycle = 1
+        start_time    = "04:00"
+      }
+    }
+    retention_policy {
+      max_retention_days    = 14
+      on_source_disk_delete = "KEEP_AUTO_SNAPSHOTS"
+    }
     snapshot_properties { labels = { application = "ankicompanion" } }
   }
 }
@@ -82,10 +103,22 @@ resource "google_compute_instance" "server" {
   allow_stopping_for_update = true
   boot_disk {
     auto_delete = true
-    initialize_params { image = "debian-cloud/debian-12", type = "pd-standard", size = 10 }
+    initialize_params {
+      image = "debian-cloud/debian-12"
+      type  = "pd-standard"
+      size  = 10
+    }
   }
-  attached_disk { source = google_compute_disk.data.self_link, device_name = "ankicompanion-data", mode = "READ_WRITE" }
-  attached_disk { source = google_compute_disk.backups.self_link, device_name = "ankicompanion-backups", mode = "READ_WRITE" }
+  attached_disk {
+    source      = google_compute_disk.data.self_link
+    device_name = "ankicompanion-data"
+    mode        = "READ_WRITE"
+  }
+  attached_disk {
+    source      = google_compute_disk.backups.self_link
+    device_name = "ankicompanion-backups"
+    mode        = "READ_WRITE"
+  }
   network_interface {
     subnetwork = google_compute_subnetwork.subnet.id
     access_config { nat_ip = google_compute_address.ip.address }

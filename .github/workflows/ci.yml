@@ -9,6 +9,18 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  gcp-infrastructure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+      - name: Validate Google Compute Engine and persistent disk infrastructure
+        run: |
+          terraform -chdir=deployment/google-cloud init -backend=false -input=false
+          terraform -chdir=deployment/google-cloud validate -no-color
   python:
     runs-on: ubuntu-24.04
     env:
