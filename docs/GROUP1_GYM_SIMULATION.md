@@ -39,3 +39,9 @@ python -m pytest -q tests/test_native_three_device_gym.py
 ```
 
 The CI Python job produces a `test-results/group1-gym` report. **A green emulator/model test is not a guarantee of sub-5-second native sync on cellular, Android Doze wakeups, or on the owner's physical devices.** Network propagation, actual native Anki collection sync and study accountability are distinct clocks and outcomes. Actual full-sync conflicts can require a native direction choice; never silently discard either side.
+
+## Confirmed collision hazard and fail-safe
+
+An actual Anki 26.9.3 native three-replica CI run reproduced one `revlog.id` assigned to **two different cards** by independent, artificially rapid offline review sessions. This differs from the companion review identity (collection + revlog timestamp + card ID): both study attempts remain distinct for streak accountability, but native Anki's revlog primary key cannot faithfully store both. **Production guard implemented:** the coordinating server persists collisions by collection, exposes `native_sync.conflicted`, and never marks affected native upload tickets complete. Both clients surface the conflict; Android still permits clearly labeled local-only studying. This requires native conflict resolution, not an invented automatic database rewrite.
+
+A separately paced three-native-collection CI scenario verifies the ordinary non-colliding incremental synchronization path, while `tests/test_native_review_id_collision_guard.py` tests the collision itself. A production conflict cannot be declared resolved solely from passing the non-colliding scenario.

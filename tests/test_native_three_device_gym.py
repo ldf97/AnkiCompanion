@@ -108,7 +108,18 @@ def test_real_native_three_device_gym_offline_undo(tmp_path):
             phone.undo()
             assert len(reviews(phone))==34
             # PC2 studies different cards while gym phone is disconnected.
+            # Ultra-fast programmatic answer loops can produce the SAME
+            # millisecond revlog primary key on independent Anki replicas.
+            # That dangerous case is separately covered by our server-side
+            # native collision guard; this test exercises the normal
+            # human-paced, non-colliding offline scheduling-merge path.
+            time.sleep(.35)
             study(pc2,'Second-PC',5)
+            phone_revlog_ids={r[0] for r in before if r not in reviews(pc1)}
+            pc2_revlog_ids={r[0] for r in reviews(pc2) if r not in reviews(pc1)}
+            assert phone_revlog_ids.isdisjoint(pc2_revlog_ids), (
+                'Independent native Anki review-log ID collision detected; '
+                'never silently merge this unsafe fixture')
             sync(pc2);report(pc2,'pc2');publish(pc2,'pc2')
             assert len(reviews(pc2))==25
             # Phone reconnects; unsent attempts including the undone one are

@@ -14,3 +14,7 @@ Date: 2026-11-02. Base: main `d2c6da1152e979b81013e83bbb4f1d33ed326027` (PR #11)
 ## First native CI finding
 
 GitHub run 41511882095 reached the native Python test and failed at HTTP 401 because the new test fixture omitted its own Authorization header; the server correctly refused unauthenticated requests. The source fixture now sends its ephemeral test-only bearer token. This error did not establish a native sync failure; rerun CI on the corrected exact SHA.
+
+## Actual native CI revealed a scheduling hazard (run 41512281767)
+
+The authentic 3-collection Anki 26.9.3 test showed different cards sharing one native millisecond `revlog.id` across two offline replicas, leading to different native review rows after syncing. This is a **real concurrency hazard**, not merely a mistaken test assertion. We now have an additive `native_id_collisions` server table and a per-collection `native_sync.conflicted` guard. Study attempts remain credited, but native sync receipts cannot be falsely marked complete. Android/Desktop automatic native sync is paused for the affected collection and local study remains accessible. A clean 3-collection native test spaces the fast scripted sessions to avoid the artificial same-millisecond collision; the collision itself gets a focused server regression. Actual resolution of a preexisting collided native Anki profile may require explicit manual review; there is no safe automatic rewriting of Anki's authoritative revlog.

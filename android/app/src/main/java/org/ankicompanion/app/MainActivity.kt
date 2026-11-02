@@ -111,14 +111,15 @@ class MainActivity:Activity() {
         if(native!=null) {
             val revision=native.optLong("revision",0)
             val applied=native.optLong("applied_revision",0)
-            if(native.optBoolean("pending"))status.append(" · Anki sync pending $applied/$revision")
+            if(native.optBoolean("conflicted"))status.append(" · Native review-ID collision: scheduling unsynced; study credit saved")
+            else if(native.optBoolean("pending"))status.append(" · Anki sync pending $applied/$revision")
             else if(revision>0L && applied>=revision)status.append(" · Anki sync confirmed $applied/$revision")
             else status.append(" · Anki sync not yet verified")
         }
         // A connected server can acknowledge answers without proving native
         // Anki scheduling convergence. Surface the bridge's true error too.
         val bridgeIssue=storage.getSetting("bridge_status")
-        if(bridgeIssue.startsWith("Scheduling sync pending:"))status.append(" · $bridgeIssue")
+        if(bridgeIssue.startsWith("Scheduling sync pending:") || bridgeIssue.startsWith("Native review-ID collision:"))status.append(" · $bridgeIssue")
         // Server-reported native receipt and observed device liveness are
         // independent: a synced/offline laptop is NOT marked online.
         value.optJSONArray("devices")?.objects()?.take(3)?.forEach { device ->
@@ -128,7 +129,8 @@ class MainActivity:Activity() {
             val receipt=device.optJSONObject("native_sync")
             val revision=receipt?.optLong("revision",0) ?: 0L
             val applied=receipt?.optLong("applied_revision",0) ?: 0L
-            val info=if(revision>applied)"Anki sync pending $applied/$revision"
+            val info=if(receipt?.optBoolean("conflicted")==true)"native scheduling conflict · practice recorded"
+                     else if(revision>applied)"Anki sync pending $applied/$revision"
                      else if(revision>0L)"Anki sync confirmed $applied/$revision"
                      else "Anki sync not yet verified"
             status.append(" · $label: $live; $info")
@@ -199,6 +201,8 @@ class MainActivity:Activity() {
         }){result->
             if(storage.getSetting("study_handoff_mode")=="offline")
                 status.text="Studying offline · reviews and undos will sync on reconnect"
+            if(storage.getSetting("study_handoff_mode")=="local_unsynced")
+                status.text="Studying locally · scheduling conflict on server; attempts retained"
             val deck=result as? JSONObject
             if(deck==null)status.text="No eligible subdeck. Check your selected parent and Anki limits."
             else try{AnkiBridge.open(this,deck.getString("id"))}catch(e:Exception){status.text=e.message ?: "Could not open AnkiDroid"}
