@@ -61,8 +61,15 @@ def smoke():
         # The add-on loader must have registered its guarded callbacks; an
         # installed folder alone does not demonstrate actual integration.
         from aqt import gui_hooks
-        assert any(getattr(fn,'__module__','').endswith('anki_companion_bridge')
-                   for fn in gui_hooks.reviewer_did_answer_card), 'Review hook was not installed'
+        # Anki 26.09 generates hook *objects*, not iterable callback lists.
+        # The supported hook exposes .count(), while generated source stores
+        # its registered functions in ._hooks; inspect that collection only
+        # in this disposable acceptance process to prove *our* add-on loaded.
+        review_hook = gui_hooks.reviewer_did_answer_card
+        registered = getattr(review_hook, '_hooks', ())
+        assert review_hook.count() > 0 and any(
+            getattr(fn, '__module__', '').endswith('anki_companion_bridge')
+            for fn in registered), 'AnkiCompanion review hook was not installed'
         from json import dumps
         evidence=ROOT/'test-results'/'windows-anki-gui.json'
         evidence.parent.mkdir(parents=True,exist_ok=True)

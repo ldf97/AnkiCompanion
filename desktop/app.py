@@ -394,8 +394,32 @@ class Window(QMainWindow):
 
 STYLE='''QWidget{background:#121418;color:#eee6db;font-family:"DejaVu Sans";font-size:13px} QLabel#title{font-size:18px;font-weight:700;letter-spacing:2px} QLabel#muted{color:#9a9da3;font-size:11px} QPushButton,QComboBox,QLineEdit,QSpinBox{background:#22252b;border:1px solid #363a42;border-radius:7px;padding:9px} QPushButton:hover{border-color:#f19a4c} QPushButton#primary{background:#ee9147;color:#17120e;font-weight:700} QProgressBar{border:0;background:#2e3036;border-radius:3px} QProgressBar::chunk{background:#ef944a;border-radius:3px}'''
 
+def _ci_signal_gui_ready(window):
+    """Test-only proof the *installed* Qt window reached its event loop.
+
+    A running EXE alone is not evidence that the actual window initialized.
+    No private study state, pairing tokens, or Anki profile data is written.
+    """
+    target = os.environ.get('ANKI_COMPANION_CI_READY_FILE')
+    if not target or os.environ.get('CI', '').lower() != 'true':
+        return
+    if not window.isVisible() or QApplication.instance() is None:
+        raise RuntimeError('Installed companion GUI did not become visible')
+    path = Path(target)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(path.name + '.pending')
+    temp.write_text(json.dumps({
+        'pid': os.getpid(), 'qt_window_visible': True,
+        'qt_event_loop_started': True,
+        'title': window.windowTitle(),
+    }, sort_keys=True), encoding='utf-8')
+    temp.replace(path)
+
+
 def main():
     app=QApplication(sys.argv);app.setApplicationName('AnkiCompanion');app.setOrganizationName('AnkiCompanion');app.setQuitOnLastWindowClosed(False);app.setStyleSheet(STYLE)
-    window=Window();window.show();sys.exit(app.exec())
+    window=Window();window.show()
+    QTimer.singleShot(0, lambda: _ci_signal_gui_ready(window))
+    sys.exit(app.exec())
 
 if __name__=='__main__':main()

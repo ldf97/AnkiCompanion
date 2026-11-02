@@ -9,12 +9,10 @@ def make(directory,version,build,commit):
     for platform,name in [('android','AnkiCompanion-Android.apk'),('ankidroid','AnkiDroid-Companion-Android.apk'),('windows','AnkiCompanion-Windows-Setup.exe'),('source','AnkiCompanion-source.zip')]:
         path=directory/name
         if not path.is_file():
-            if platform in ('android','ankidroid'):
-                # Publish Windows updates even before the owner provisions a
-                # private persistent Android signing keystore. Never ship an
-                # APK signed with a rotating ephemeral CI key.
-                continue
-            raise ValueError('Missing release input: '+name)
+            # Requirement #30 is an ALL-component release, not a misleading
+            # Windows-only release that silently omits an installed Android app.
+            # The signing workflow must build both compatible production APKs.
+            raise ValueError('Missing required signed release input: '+name)
         raw=path.read_bytes();assets[platform]=dict(filename=name,size=len(raw),sha256=hashlib.sha256(raw).hexdigest())
         if platform=='android': assets[platform]['version_code']=build
         if platform=='ankidroid': assets[platform]['version_code']=220000000+build

@@ -19,3 +19,11 @@ GitHub Actions run 41484525881: Python, Android, AnkiDroid, API28/33/35/36 emula
 
 ### Recovery
 This directory is a real editable source workspace and Git repository; after each source commit a ZIP and updated ledger will be retained, and the exact source diff uploaded to PR #9. Never replace an existing APK with an incompatible signature or silently reset original user data.
+
+## CI failure correction and final acceptance tightening (current continuation)
+
+- **#34:** Latest Windows CI reached real Anki/AQt startup, then failed because Anki 26.09's generated `reviewer_did_answer_card` hook object is **not iterable**; `scripts/ci_windows_anki_launcher.py` now asserts `hook.count()` and checks its generated `_hooks` callback registry for `anki_companion_bridge` (upstream source `pylib/tools/hookslib.py`, Anki 26.09.3). Test `test_real_anki_hook_is_noniterable_generated_object` passes locally; Windows CI must validate this change.
+- **#36:** `desktop/app.py` emits a narrowly scoped test-only GUI-ready marker from a queued Qt event-loop callback (CI only), and `scripts/ci_windows_installed_app.py` rejects a process that is merely alive but never initialized a Qt window, also checking actual process PID and startup evidence.
+- **#30:** `scripts/release_manifest.py` refuses to create a complete release missing **either** Android signed APK or the Windows/source packages; this matches the existing release publication gate and avoids an unannounced partial release.
+- **Local validation:** 108 tests passed, 1 skipped (this local Python environment has no PySide6; GitHub CI installs it); Python compilation passed. Native Anki, physical phone/laptop and private signer checks are not established by these local tests.
+- **Deployment remains independent:** No hosted Google Compute Engine instance or signed production release has been provisioned. Do not merge/release until exact-head GitHub CI accepts Windows and native Android cross-device.

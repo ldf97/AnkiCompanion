@@ -22,16 +22,34 @@ def smoke(localappdata=None, *, hold_seconds=8):
     log=output/'windows-installed-app.log'
     env=dict(os.environ,QT_QPA_PLATFORM='offscreen',QT_OPENGL='software',
              QSG_RHI_BACKEND='software',ANKI_COMPANION_SKIN='study_companion')
+    ready=output/'windows-installed-qt-ready.json'
+    ready.unlink(missing_ok=True)
+    env.update(CI='true',ANKI_COMPANION_CI_READY_FILE=str(ready.resolve()))
     with log.open('w',encoding='utf-8') as trace:
         process=subprocess.Popen([str(executable)],cwd=str(executable.parent),
                                  env=env,stdout=trace,stderr=subprocess.STDOUT)
         try:
+            startup_deadline=time.monotonic()+30
+            while time.monotonic()<startup_deadline:
+                if process.poll() is not None:
+                    raise RuntimeError(f'Installed Windows desktop exited early: code={process.returncode}')
+                if ready.is_file():
+                    break
+                time.sleep(.25)
+            else:
+                raise RuntimeError('Installed Windows desktop did not signal a live Qt window')
+            gui=json.loads(ready.read_text(encoding='utf-8'))
+            if gui.get('pid')!=process.pid or gui.get('qt_window_visible') is not True \
+                    or gui.get('qt_event_loop_started') is not True \
+                    or gui.get('title')!='Anki Companion':
+                raise RuntimeError('Installed desktop returned an invalid Qt GUI-ready marker')
             deadline=time.monotonic()+hold_seconds
             while time.monotonic()<deadline:
                 if process.poll() is not None:
-                    raise RuntimeError(f'Installed Windows desktop exited early: code={process.returncode}')
+                    raise RuntimeError(f'Installed Windows desktop exited after GUI-ready: code={process.returncode}')
                 time.sleep(.25)
             evidence=dict(installed_windows_gui_started=True,
+                          qt_gui_ready_verified=True,
                           remained_running_seconds=hold_seconds,
                           in_place_installation=True,
                           isolated_ci_runner=True)

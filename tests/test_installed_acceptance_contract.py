@@ -40,3 +40,30 @@ def test_cross_device_evidence_rejects_false_positive(tmp_path):
     (tmp_path/'matching-native-collections.json').write_text(json.dumps(rows))
     with pytest.raises(AssertionError,match='scheduling'):
         verify(tmp_path)
+
+
+def test_installed_windows_exe_must_prove_real_qt_event_loop_not_just_pid(monkeypatch,tmp_path):
+    import pytest
+    pytest.importorskip("PySide6.QtWidgets")
+    from desktop.app import _ci_signal_gui_ready
+    from PySide6.QtWidgets import QApplication
+    app=QApplication.instance() or QApplication([])
+    marker=tmp_path/'qt-ready.json'
+    monkeypatch.setenv('CI','true')
+    monkeypatch.setenv('ANKI_COMPANION_CI_READY_FILE',str(marker))
+    class Window:
+        def __init__(self,visible):self.visible=visible
+        def isVisible(self):return self.visible
+        def windowTitle(self):return 'Anki Companion'
+    import pytest
+    with pytest.raises(RuntimeError,match='not become visible'):
+        _ci_signal_gui_ready(Window(False))
+    assert not marker.exists()
+    _ci_signal_gui_ready(Window(True))
+    value=json.loads(marker.read_text())
+    assert value['pid']==__import__('os').getpid()
+    assert value['qt_window_visible'] and value['qt_event_loop_started']
+    launcher=(ROOT/'scripts/ci_windows_installed_app.py').read_text()
+    assert 'qt_gui_ready_verified=True' in launcher
+    assert 'process.pid' in launcher and 'gui.get' in launcher
+    assert 'did not signal a live Qt window' in launcher

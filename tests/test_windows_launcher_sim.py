@@ -109,3 +109,24 @@ def test_real_anki_gui_smoke_verifies_review_hook_and_exits_before_qt_atexit():
     assert 'os._exit(0)' in source
     assert source.index("assert (addon_dir/'__init__.py').is_file()") < source.index('os._exit(0)')
     assert source.index('review_hook_registered') < source.index('os._exit(0)')
+
+
+def test_real_anki_hook_is_noniterable_generated_object():
+    """Match upstream Anki 26.09's generated hook API, not a Python list."""
+    class ActualStyleHook:
+        _hooks=[]
+        def count(self):return len(self._hooks)
+        def append(self,fn):self._hooks.append(fn)
+        # no __iter__; 'for fn in hook' must crash, as CI demonstrated.
+    hook=ActualStyleHook()
+    assert not hook.count()
+    def observer(): pass
+    observer.__module__='anki_companion_bridge'
+    hook.append(observer)
+    assert hook.count() and any(
+        getattr(fn,'__module__','').endswith('anki_companion_bridge')
+        for fn in hook._hooks)
+    source=(ROOT/'scripts/ci_windows_anki_launcher.py').read_text()
+    assert "getattr(review_hook, '_hooks', ())" in source
+    assert 'review_hook.count() > 0' in source
+    assert 'for fn in gui_hooks.reviewer_did_answer_card' not in source

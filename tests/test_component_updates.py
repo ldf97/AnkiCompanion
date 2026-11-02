@@ -48,3 +48,15 @@ def test_separate_android_updates_are_exposed_in_client():
     windows=(ROOT/'desktop/app.py').read_text()
     assert 'component_update_summary' in windows
     assert 'remote_server=first_run.has_remote_connection(self.config)' in windows
+
+
+def test_release_manifest_refuses_to_omit_any_installed_component(tmp_path):
+    sources=('AnkiCompanion-Windows-Setup.exe','AnkiCompanion-source.zip',
+             'AnkiCompanion-Android.apk','AnkiDroid-Companion-Android.apk')
+    for filename in sources:(tmp_path/filename).write_bytes(filename.encode())
+    for filename in sources:
+        missing=tmp_path/filename
+        missing.unlink()
+        with pytest.raises(ValueError,match='Missing required signed release input'):
+            make(tmp_path,'1.4.3',117,'a'*40)
+        missing.write_bytes(filename.encode())
