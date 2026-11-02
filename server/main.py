@@ -68,17 +68,19 @@ def create_app(data_dir=None, token=None, clock=None):
         return FileResponse(path,filename=name,media_type='application/octet-stream')
 
     @api.get('/v1/changes', dependencies=[Depends(auth)])
-    def changes(since: int = 0, wait_ms: int = 0):
-        # Authenticated, bounded, cross-process-safe long polling. No events,
-        # identities, tokens, or artwork are sent over the notification channel.
-        if since < 0 or not 0 <= wait_ms <= 4000:
-            raise HTTPException(400, 'Invalid change cursor or wait')
+    def changes(since: int = 0, wait_ms: int = 0, device_id: str = '', collection_id: str = ''):
+        # Device-specific durable long-poll; never echo a review to its source.
+        # This is a dispatch wakeup, NOT proof native Anki/AnkiWeb sync finished.
+        if (since < 0 or not 0 <= wait_ms <= 4000 or
+                len(device_id) > 100 or len(collection_id) > 100 or
+                (collection_id and not __import__('re').fullmatch(r'[A-Za-z0-9_-]+',collection_id))):
+            raise HTTPException(400, 'Invalid change cursor, scope or wait')
         deadline = time.monotonic() + wait_ms / 1000.0
         while True:
-            sequence = store.change_sequence()
-            if sequence != since or time.monotonic() >= deadline:
-                return {'sequence':sequence, 'changed':sequence != since,
-                        'reset':sequence < since}
+            change = store.changes_since(since,device_id,collection_id)
+            if (change['sequence'] != since or change['reset'] or
+                    time.monotonic() >= deadline):
+                return change
             time.sleep(min(0.2, max(0, deadline - time.monotonic())))
 
     @api.get('/v1/state', dependencies=[Depends(auth)])
@@ -157,6 +159,7 @@ def create_app(data_dir=None, token=None, clock=None):
                 temp.flush()
                 temp.close()
                 with render_lock: result=packs.install(path)
+                store.notify_catalog_change()
                 return {'id':result['id'],'version':result['version'],'name':result['name']}
             finally:
                 temp.close()

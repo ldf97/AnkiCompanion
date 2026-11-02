@@ -55,9 +55,12 @@ class Bridge:
         while not self.stop_event.is_set():
             try:
                 api=self.client()
-                query='/v1/changes' if sequence is None else '/v1/changes?since='+str(sequence)+'&wait_ms=3500'
+                scope='&device_id='+quote(self.config['device_id'],safe='')+'&collection_id='+quote(self.config.get('collection_id','primary'),safe='')
+                query='/v1/changes?since='+str(sequence or 0)+'&wait_ms='+('0' if sequence is None else '3500')+scope
                 state=api.request(query)
-                changed=sequence is not None and state['sequence']!=sequence
+                # Suppressed self-events move the cursor but do not wake the
+                # originating Anki reviewer's costly scan/native sync.
+                changed=sequence is not None and (state.get('changed',False) or state.get('reset',False))
                 sequence=state['sequence']
                 if changed and not self.stopped:
                     mw.taskman.run_on_main(lambda:self.tick() if not self.stopped else None)
@@ -115,10 +118,17 @@ class Bridge:
                     receipt=api.request('/v1/events','POST',{'device_id':self.config['device_id'],'events':[json.loads(p) for i,p in pending]})
                     source_ticket=receipt.get('native_upload_tickets',{}).get(self.config.get('collection_id','primary'),'')
                     with self.lock,self.db() as db:db.executemany('UPDATE outbox SET sent=1 WHERE id=?',[(i,) for i,p in pending])
-                uploaded_generation=captured_generation
                 if undo:
                     api.request('/v1/events/retract','POST',{'ids':undo,'device_id':self.config['device_id']})
                     with self.lock,self.db() as db:db.executemany('UPDATE undo SET sent=1 WHERE id=?',[(i,) for i in undo])
+                # The network batch is capped at 1000. An acknowledgment of
+                # that batch MUST NOT claim the entire generation is uploaded
+                # if more review/undo events are still on disk.
+                with self.lock,self.db() as db:
+                    has_unsent = bool(db.execute('SELECT 1 FROM outbox WHERE sent=0 LIMIT 1').fetchone())
+                    has_undos = bool(db.execute('SELECT 1 FROM undo WHERE sent=0 LIMIT 1').fetchone())
+                if not has_unsent and not has_undos:
+                    uploaded_generation=captured_generation
                 api.request('/v1/snapshots','POST',dict(device_id=self.config['device_id'],
                     label=self.config.get('device_label','Anki Desktop'),decks=decks,
                     collection_id=self.config.get('collection_id','primary'),

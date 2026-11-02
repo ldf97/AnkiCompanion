@@ -40,6 +40,11 @@ class Store:
             CREATE TABLE IF NOT EXISTS sync_pending(collection TEXT NOT NULL, device TEXT NOT NULL,
                 dirty INTEGER NOT NULL DEFAULT 0, latest_event_ms INTEGER NOT NULL DEFAULT 0,
                 ticket TEXT NOT NULL DEFAULT '', PRIMARY KEY(collection,device));
+            -- Small durable dispatch log allows collection filtering and origin exclusion.
+            CREATE TABLE IF NOT EXISTS change_events(seq INTEGER PRIMARY KEY,
+                collection TEXT NOT NULL DEFAULT '', origin_device TEXT NOT NULL DEFAULT '',
+                target_device TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS change_events_collection_seq ON change_events(collection, seq);
             ''')
             # Add the ticket to existing deployments without erasing histories.
             cols={row['name'] for row in db.execute('PRAGMA table_info(sync_pending)')}
@@ -65,16 +70,52 @@ class Store:
             finally: db.close()
 
     @staticmethod
-    def _notify_change(db):
-        # Increment only inside the same transaction as the actual mutation.
+    def _notify_change(db, kind='state', collection='', origin_device='', target_device=''):
+        """Record a durable, scoped notification in the same SQLite transaction.
+
+        A source device gets its POST acknowledgement, *not* its own review
+        echoed back over its change feed. We still notify other devices in
+        the same collection. Explicit commands are delivered only to target.
+        """
         db.execute("UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='change_sequence'")
+        sequence=int(db.execute("SELECT value FROM meta WHERE key='change_sequence'").fetchone()[0])
+        db.execute('INSERT INTO change_events VALUES (?,?,?,?,?)',
+                   (sequence,collection,origin_device,target_device,kind))
+        # Bound the log even for years of study. Old cursors get a reset.
+        if sequence % 1000 == 0:
+            db.execute('DELETE FROM change_events WHERE seq<?',(sequence-50000,))
 
     def change_sequence(self):
-        # A read-only connection prevents watcher requests from serializing all
-        # writers through the normal BEGIN IMMEDIATE transaction.
         with sqlite3.connect(self.path, timeout=5) as db:
             row=db.execute("SELECT value FROM meta WHERE key='change_sequence'").fetchone()
             return int(row[0]) if row else 0
+
+    def changes_since(self, since=0, device_id='', collection_id=''):
+        """Read-only, cross-process cursor and only events relevant to listener.
+
+        Empty device/collection maintains compatibility with older watchers.
+        Callers always advance the cursor even for suppressed self-events.
+        """
+        with sqlite3.connect(self.path, timeout=5) as db:
+            current=int(db.execute("SELECT value FROM meta WHERE key='change_sequence'").fetchone()[0])
+            earliest=db.execute('SELECT MIN(seq) FROM change_events').fetchone()[0]
+            reset=since>current or (since<current and (earliest is None or since<earliest-1))
+            relevant=False
+            if current>since and not reset:
+                clauses=['seq>?'];args=[since]
+                if device_id:
+                    clauses.extend(["(origin_device='' OR origin_device!=?)",
+                                    "(target_device='' OR target_device=?)"])
+                    args.extend([device_id,device_id])
+                if collection_id:
+                    clauses.append("(collection='' OR collection=?)")
+                    args.append(collection_id)
+                query='SELECT 1 FROM change_events WHERE '+' AND '.join(clauses)+' LIMIT 1'
+                relevant=db.execute(query,args).fetchone() is not None
+            return {'sequence':current,'changed':bool(relevant or reset),'reset':bool(reset)}
+
+    def notify_catalog_change(self):
+        with self.tx() as db:self._notify_change(db,kind='skin')
 
     def _settings(self, db):
         return Settings.model_validate(json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])).model_dump()
@@ -104,7 +145,7 @@ class Store:
                 db.execute("UPDATE days SET lineup=? WHERE day=?",
                            (json.dumps(lineup), current_day))
             db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(settings),))
-            self._notify_change(db)
+            self._notify_change(db,kind='settings')
             return settings
 
     def _day(self, db, day, packs):
@@ -121,7 +162,7 @@ class Store:
     def add_events(self, events, packs, now_ms=None, device_id='unknown'):
         now_ms = now_ms or int(time.time() * 1000)
         with self.tx() as db:
-            settings = self._settings(db); inserted = 0; enriched = False
+            settings = self._settings(db); inserted = 0; enriched = False; changed_collections=set()
             for event in events:
                 if event.revlog_id > now_ms + 300_000: raise ValueError('Review event is in the future')
                 if event.revlog_id < 946684800000: raise ValueError('Invalid review timestamp')
@@ -146,6 +187,7 @@ class Store:
                     if previous!=json.loads(row['payload']):
                         db.execute('UPDATE events SET payload=? WHERE id=?',(json.dumps(previous),event.key))
                         enriched = True
+                        changed_collections.add(event.collection_id)
                     continue
                 day = study_day(event.revlog_id, settings['timezone'], settings['rollover_minute'])
                 self._day(db, day, packs)
@@ -158,12 +200,14 @@ class Store:
                     ticket=excluded.ticket''',
                     (event.collection_id,device_id,event.revlog_id,ticket))
                 inserted += 1
+                changed_collections.add(event.collection_id)
             tickets={}
             for collection in {event.collection_id for event in events}:
                 row=db.execute('SELECT ticket FROM sync_pending WHERE collection=? AND device=? AND dirty=1',
                                (collection,device_id)).fetchone()
                 if row and row['ticket']:tickets[collection]=row['ticket']
-            if inserted or enriched:self._notify_change(db)
+            for collection in sorted(changed_collections):
+                self._notify_change(db,kind='review',collection=collection,origin_device=device_id)
             return dict(inserted=inserted, received=len(events),native_upload_tickets=tickets)
 
 
@@ -203,7 +247,7 @@ class Store:
         # queue that change for native synchronization, independently of totals.
         now_ms = now_ms or int(time.time()*1000)
         with self.tx() as db:
-            changed=False
+            changed=False; changed_collections=set()
             for identity in ids:
                 if len(identity) > 250: raise ValueError('Event ID too long')
                 new_tombstone=bool(db.execute('INSERT OR IGNORE INTO tombstones VALUES (?)', (identity,)).rowcount)
@@ -212,13 +256,19 @@ class Store:
                 row=db.execute('SELECT payload FROM events WHERE id=?',(identity,)).fetchone()
                 if row and (new_tombstone or newly_retracted):
                     collection=json.loads(row['payload'])['collection_id']
+                    changed_collections.add(collection)
                     ticket=secrets.token_hex(16)
                     db.execute('''INSERT INTO sync_pending(collection,device,dirty,latest_event_ms,ticket)
                         VALUES(?,?,1,?,?) ON CONFLICT(collection,device) DO UPDATE SET
                         dirty=1,latest_event_ms=MAX(sync_pending.latest_event_ms,excluded.latest_event_ms),
                         ticket=excluded.ticket''',
                         (collection,device_id,now_ms,ticket))
-            if changed:self._notify_change(db)
+            if changed:
+                for collection in sorted(changed_collections):
+                    self._notify_change(db,kind='review',collection=collection,origin_device=device_id)
+                if not changed_collections:
+                    # Tombstoned unseen review: no known collection to filter.
+                    self._notify_change(db,kind='review',origin_device=device_id)
 
     def snapshot(self, snapshot, now_ms):
         with self.tx() as db:
@@ -237,7 +287,7 @@ class Store:
                 if (pending and pending['dirty'] and pending['ticket'] and
                         secrets.compare_digest(snapshot.native_upload_ticket,pending['ticket'])):
                     current+=1
-                    self._notify_change(db)
+                    self._notify_change(db,kind='native',collection=collection,origin_device=snapshot.device_id)
                     db.execute('UPDATE sync_versions SET revision=? WHERE collection=?',(current,collection))
                     db.execute("UPDATE sync_pending SET dirty=0,ticket='' WHERE collection=? AND device=?",
                                (collection,snapshot.device_id))
@@ -317,7 +367,7 @@ class Store:
         with self.tx() as db:
             db.execute('INSERT INTO commands VALUES (?,?,?,?,0)',
                 (identity, command.device_id, command.model_dump_json(), now_ms))
-            self._notify_change(db)
+            self._notify_change(db,kind='command',target_device=command.device_id)
         return identity
 
     def commands(self, device, now_ms):

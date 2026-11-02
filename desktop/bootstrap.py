@@ -185,6 +185,10 @@ def addon_archive():
     return Path(__file__).resolve().parents[1]/'packages'/'Anki_Companion_Bridge.ankiaddon'
 
 
+ADDON_SOURCE_FILES=frozenset({'__init__.py','bridge.py','history.py','rules.py',
+                 'transport.py','review_epoch.py','config.json','config.md','manifest.json'})
+
+
 def ensure_anki_bridge():
     """Safely install/upgrade the optional desktop add-on without scripting.
 
@@ -201,8 +205,7 @@ def ensure_anki_bridge():
     target=addons/'anki_companion_bridge'
     with ZipFile(archive) as z:
         names=z.namelist()
-        allowed={'__init__.py','bridge.py','history.py','rules.py','transport.py',
-                 'config.json','config.md','manifest.json'}
+        allowed=ADDON_SOURCE_FILES
         if set(names)!=allowed or any(z.getinfo(n).file_size>250_000 for n in names):
             raise ValueError('Bundled desktop bridge did not pass validation')
         manifest=json.loads(z.read('manifest.json'))
