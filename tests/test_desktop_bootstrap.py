@@ -132,3 +132,26 @@ def test_pairing_requires_https_and_preserves_existing_hosted_endpoint():
     import pytest
     with pytest.raises(ValueError,match="HTTPS"):
         setup.remote_pairing_link(config)
+
+def test_gui_export_creates_verified_original_server_snapshot_without_mutation(tmp_path,monkeypatch):
+    from pathlib import Path
+    from server.main import create_app
+    from server.backup import verify_snapshot
+    from zipfile import ZipFile
+    import pytest
+    monkeypatch.setenv("LOCALAPPDATA",str(tmp_path/"Local"))
+    source=setup.data_dir()
+    create_app(source)
+    original_db=(source/"companion.sqlite3").read_bytes()
+    original_token=(source/"token.txt").read_bytes()
+    dest=tmp_path/"AnkiCompanion-Server-Migration.zip"
+    path=setup.export_hosted_state(dest)
+    assert Path(path)==dest
+    manifest=verify_snapshot(dest)
+    assert "companion.sqlite3" in manifest["files"]
+    with ZipFile(dest) as archive:
+        assert archive.read("token.txt")==original_token
+    assert (source/"companion.sqlite3").read_bytes()==original_db
+    assert (source/"token.txt").read_bytes()==original_token
+    with pytest.raises(FileExistsError):
+        setup.export_hosted_state(dest)

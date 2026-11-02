@@ -14,11 +14,18 @@ The plan creates a single standard \`e2-micro\` in \`us-east1\`, 10 GB boot + 15
 
 A public static IPv4 address is reserved (potential **billable** charge) for stable phone pairing. If \`GCP_DOMAIN\` is unset, the app uses an \`*.sslip.io\` hostname reflecting that address and Caddy provisions TLS; this uses a third-party DNS provider and may not be ideal for long-term production. A domain you own provides more control.
 
-## One-time original-server migration
+## One-time migration, entirely with graphical interfaces
 
-**On first provision the VM will not start a blank server.** To protect the already existing history/settings/token/private artwork, the previous Windows server's SQLite database must be consistently backed up (SQLite online backup/WAL included), then transferred **once** to the persistent data disk with the original \`token.txt\` and \`packs/\` files. Do not copy only the live \`.sqlite3\` file. Never upload this material to public GitHub. A new blank cloud token would disconnect the existing phone and lose centralized progress.
+This is necessary **once** because the existing Windows server already holds your study history, settings, Eren/private skin imports, and original pairing token. It is not part of future updates.
 
-After the migration, reboot the VM via Google Cloud Console, verify \`https://HOST/health\` and a 401 rejection for \`https://HOST/v1/state\`, and use **Connection** in Windows/Android to select the hosted endpoint. Normal code updates thereafter require **no restores**: app settings, SQLite, pairing token and skin packs remain on protected disks.
+1. Open **AnkiCompanion** on Windows and click **Export to Google Cloud**. Save the file with its suggested name, **AnkiCompanion-Server-Migration.zip**. The export uses SQLite's online backup API to capture WAL-committed reviews, includes the exact original token and private skin assets, and verifies the archive before saving. It does not shut down or alter the original server. The ZIP is **not encrypted**; keep it private.
+2. In **Google Cloud Console → Compute Engine → VM instances**, click **SSH** for the new AnkiCompanion VM. In the SSH-in-browser window, choose **Upload File** and select that ZIP. It must be uploaded with the exact suggested filename into the VM account's home folder. Do not upload it to GitHub.
+3. Return to the VM instances page and **Restart/Reset** the VM. The pinned startup script automatically finds the uploaded ZIP, validates every SHA-256 hash, checks the SQLite database and pairing token, refuses to overwrite any existing hosted server, restores the original state, and deletes the uploaded ZIP after success.
+4. Confirm HTTPS health and that unauthenticated state requests return 401. Open **Connection** on Windows and Android and select the new hosted HTTPS URL with the **same original token**. The Windows application now remembers the hosted connection across restarts and provides a hosted **Pair phone** link. Confirm the same progress and skin catalog are present before retiring the Windows-hosted server.
+
+After successful verification, delete the remaining migration ZIP from your Windows Downloads folder. The original Anki collection, local server database, and installed personal skin are never uninstalled or overwritten by this migration.
+
+If the VM has no existing database and you have not uploaded the ZIP, it intentionally stays in **MIGRATION_REQUIRED** state instead of inventing an empty new profile. On an error the original Windows data stays untouched, and the importer refuses destructive overwrites. No PowerShell or command-line tools are required from the user.
 
 ## Important limitations and expenses
 
