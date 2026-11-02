@@ -7,7 +7,8 @@ def test_gce_has_two_protected_disks_and_native_sqlite():
     assert 'machine_type = "e2-micro"' in tf
     assert 'backend "gcs"' in tf
     assert tf.count("prevent_destroy = true")==2
-    assert 'size = 10' in tf and 'size = 15' in tf and 'size = 5' in tf
+    import re
+    assert all(re.search(r'\\bsize\\s*=\\s*'+str(n)+r'\\b',tf) for n in (10,15,5))
     assert 'device_name = "ankicompanion-data"' in tf
     assert 'device_name = "ankicompanion-backups"' in tf
     assert 'snapshot_schedule_policy' in tf
