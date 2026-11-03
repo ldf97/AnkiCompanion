@@ -59,7 +59,10 @@ class UpdateButtonClickTest {
 
         assertTrue("Click did not fetch the next release and display confirmation",
             device.wait(Until.hasObject(By.text("Update to 0.1.2")),90000))
-        val positive=device.findObject(By.text("Update"))
+        // AOSP renders AlertDialog actions as "UPDATE" on some API levels.
+        // The system resource id is more stable than case-sensitive text.
+        val positive=device.wait(Until.findObject(By.res("android:id/button1")),10000)
+            ?: device.findObject(By.textMatches("(?i)^update$"))
         assertNotNull("No Update confirmation button",positive)
         positive.click()
 
