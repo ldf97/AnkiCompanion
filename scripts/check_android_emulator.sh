@@ -22,7 +22,7 @@ fi
 if [[ "${1:-}" == "35" ]]; then
   # Screenshot extraction is REQUIRED for the requested visual acceptance.
   # A passing test without captured images is not sufficient evidence.
-  for picture in before.png after.png result.json; do
+  for picture in before.png after.png widget-before.png widget-after.png result.json; do
     test -s "app/build/emulator-evidence/evidence/streak-random/$picture" || {
       echo "Missing actual Android screenshot/evidence: $picture" >&2
       exit 1
