@@ -1,8 +1,10 @@
 package org.ankicompanion.app
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.view.Gravity
+import android.view.View
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -68,6 +70,24 @@ class WidgetStreakTransitionTest {
             }
             bmp.recycle()
         }
+        var renderedWidget:View?=null
+        // A direct capture of the real RemoteViews subtree, drawn by Android.
+        // This stays valid even if the emulator launcher overlays the whole screen
+        // with a Quickstep ANR. Do not represent it as a launcher screenshot.
+        fun captureRenderedWidget(filename:String) {
+            instrumentation.runOnMainSync {
+                val view=renderedWidget ?: error("No attached widget to capture")
+                assertTrue("Widget was not laid out",view.width>0 && view.height>0)
+                val bitmap=Bitmap.createBitmap(view.width,view.height,Bitmap.Config.ARGB_8888)
+                val canvas=Canvas(bitmap)
+                view.draw(canvas)
+                File(evidence,filename).outputStream().use{output ->
+                    assertTrue("Android widget view PNG encoding failed",
+                        bitmap.compress(Bitmap.CompressFormat.PNG,100,output))
+                }
+                bitmap.recycle()
+            }
+        }
         fun showWidget(title:String, expected:String) {
             instrumentation.runOnMainSync {
                 val parent=FrameLayout(activity).apply{setBackgroundColor(Color.rgb(15,17,21))}
@@ -78,6 +98,7 @@ class WidgetStreakTransitionTest {
                 val height=(170*scale).toInt()
                 val lp=FrameLayout.LayoutParams(width,height,Gravity.CENTER)
                 parent.addView(widget,lp)
+                renderedWidget=widget
                 val info=TextView(activity).apply {
                     text=title
                     setTextColor(Color.WHITE)
@@ -100,6 +121,7 @@ class WidgetStreakTransitionTest {
                 assertEquals(goal-1,before.getJSONObject("progress").getInt("answers"))
                 showWidget("ANDROID EMULATOR · BEFORE FINAL REVIEW","4/5")
                 screenshot("before.png")
+                captureRenderedWidget("widget-before.png")
 
                 // Simulates a native AnkiDroid review recorded to the phone outbox.
                 // No change to the authoritative server streak number is injected.
@@ -128,6 +150,7 @@ class WidgetStreakTransitionTest {
                 f1.image.recycle();f1.badge.recycle();f2.image.recycle();f2.badge.recycle()
                 showWidget("ANDROID EMULATOR · AFTER FINAL REVIEW","5/5")
                 screenshot("after.png")
+                captureRenderedWidget("widget-after.png")
                 // Server-side acknowledgment of the last event must not double-count it.
                 val confirmed=JSONObject(state.toString()).put("streak",length+1)
                     .put("completed",true).put("today_events",JSONArray(events.toString())
@@ -143,7 +166,10 @@ class WidgetStreakTransitionTest {
                     .put("cards_before",goal-1).put("cards_after",goal)
                     .put("flame_before","unlit").put("flame_after","lit")
                     .put("utc_day",day).put("captured_utc",Instant.now().atZone(ZoneOffset.UTC).toString())
-                    .put("evidence",JSONArray().put("before.png").put("after.png"))
+                    .put("capture_type","Android widget RemoteViews drawn to PNG on emulator")
+                    .put("evidence",JSONArray()
+                        .put("widget-before.png").put("widget-after.png")
+                        .put("before.png").put("after.png"))
                     .toString(2))
             }
         } finally {
