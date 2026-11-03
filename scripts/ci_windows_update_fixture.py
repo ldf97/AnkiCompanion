@@ -25,7 +25,7 @@ def enable_baseline():
     (WORK/"original-updates.py").write_bytes(UPDATES.read_bytes())
     (WORK/"original-version.json").write_bytes(VERSION.read_bytes())
 
-    original=APP.read_text()
+    original=APP.read_text(encoding='utf-8')
     trigger="""        if autostart and os.environ.get('ANKI_COMPANION_CI_UPGRADE')=='1':
             def _test_click_update():
                 Path(os.environ['ANKI_COMPANION_CI_MARKERS'],'clicked-update-button.txt').write_text(
@@ -38,9 +38,9 @@ def enable_baseline():
     original=replace(original,
         """if QMessageBox.question(self,'Update to '+release['version'],text+'\\n\\nDownload and update?')==QMessageBox.StandardButton.Yes:""",
         """if (QMessageBox.StandardButton.Yes if os.environ.get('ANKI_COMPANION_CI_UPGRADE')=='1' else QMessageBox.question(self,'Update to '+release['version'],text+'\\n\\nDownload and update?'))==QMessageBox.StandardButton.Yes:""")
-    APP.write_text(original)
+    APP.write_text(original,encoding='utf-8')
 
-    source=UPDATES.read_text()
+    source=UPDATES.read_text(encoding='utf-8')
     helpers='''
 def _ci_release_open(request):
     if os.environ.get('ANKI_COMPANION_CI_UPGRADE')=='1':
@@ -86,21 +86,21 @@ def _ci_asset_open(opener,request,release):
     else:
         args=[str(package),'/CURRENTUSER','/RESTARTAPPLICATIONS']
     subprocess.Popen(args,close_fds=True)""")
-    UPDATES.write_text(source)
+    UPDATES.write_text(source,encoding='utf-8')
 
 
 def restore_and_patch_target():
     APP.write_bytes((WORK/"original-desktop.py").read_bytes())
     UPDATES.write_bytes((WORK/"original-updates.py").read_bytes())
-    s=APP.read_text()
+    s=APP.read_text(encoding='utf-8')
     s=replace(s,
         "self.update_button=QPushButton('App updates · '+updates.version()['version'])",
         "self.update_button=QPushButton('App updates · PATCH CONFIRMED · '+updates.version()['version'])")
-    APP.write_text(s)
-    v=json.loads(VERSION.read_text())
+    APP.write_text(s,encoding='utf-8')
+    v=json.loads(VERSION.read_text(encoding='utf-8'))
     assert v['version']=='0.1.1',v
     v['version']='0.1.2';v['build']=v.get('build',2)+1
-    VERSION.write_text(json.dumps(v,indent=2)+'\n')
+    VERSION.write_text(json.dumps(v,indent=2)+'\n',encoding='utf-8')
 
 
 if __name__=='__main__':
