@@ -27,10 +27,10 @@ object Sync {
         else builder.setPeriodic(15*60*1000L)
         scheduler.schedule(builder.build())
     }
-    fun run(context:Context):JSONObject? {
+    fun run(context:Context,requireFresh:Boolean=false):JSONObject? {
         val store=Storage(context);val config=store.connection() ?: return null
         FcmRegistration.ensure(context)
-        if(!running.compareAndSet(false,true))return store.load("state.json")
+        if(!running.compareAndSet(false,true))return if(requireFresh)null else store.load("state.json")
         try {
             val api=Api(config);val outbox=Outbox(context)
             try {
