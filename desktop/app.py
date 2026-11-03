@@ -142,7 +142,7 @@ class Window(QMainWindow):
         footer=QHBoxLayout();goals=QPushButton('Lesson & day');goals.clicked.connect(self.goal_dialog);skins=QPushButton('Skins');skins.clicked.connect(self.skin_dialog);compact=QPushButton('Dock');compact.clicked.connect(self.show_dock)
         for b in (goals,skins,compact):footer.addWidget(b)
         box.addLayout(footer);note=QLabel('A lesson maintains your streak. Anki decides which cards are available.');note.setWordWrap(True);note.setObjectName('muted');box.addWidget(note)
-        self.update_button=QPushButton('Updates · '+updates.version()['version']);self.update_button.clicked.connect(lambda:self.check_updates(True));box.addWidget(self.update_button)
+        self.update_button=QPushButton('App updates · '+updates.version()['version']);self.update_button.clicked.connect(lambda:self.check_updates(True));box.addWidget(self.update_button)
         self.repair_button=QPushButton('Repair setup · Anki bridge / server');self.repair_button.clicked.connect(self.repair_setup);box.addWidget(self.repair_button)
         # Anki can be installed AFTER the companion. Retry safe add-on setup
         # periodically without asking the owner to run commands or copy files.
@@ -398,7 +398,7 @@ class Window(QMainWindow):
         self.launch(lambda:self.client().request('/v1/skins'),show)
     def show_dock(self):self.hide();self.dock.show();self.dock.raise_()
     def check_updates(self,interactive=False):
-        if not self.config.get('token'):return
+        # Stable GitHub release checks must work before pairing or while the server is offline.
         platform='windows' if sys.platform=='win32' else 'source'
         def received(release):
             if not release.get('configured'):
@@ -425,7 +425,7 @@ class Window(QMainWindow):
                         try:updates.install(path,release);self.quit_app()
                         except ValueError as exc:self.status.setText(str(exc)+' Downloaded to '+str(path))
                     self.status.setText('Downloading and verifying update…')
-                    self.launch(lambda:updates.download(self.client(),release,self.storage/'updates'),ready)
+                    self.launch(lambda:updates.download(None,release,self.storage/'updates'),ready)
             elif interactive:self.status.setText(release.get('message','No newer release'))
         self.launch(lambda:updates.github_release(platform),received)
     def restore(self):self.dock.hide();self.showNormal();self.raise_();self.activateWindow()
