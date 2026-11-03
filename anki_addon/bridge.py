@@ -43,7 +43,7 @@ class Bridge:
             token=home.read_text(encoding='utf-8').strip()
             if len(token)>=16:
                 self.config['token']=token
-                self.config['server_url']='http://127.0.0.1:8765'
+                self.config['server_url']='http://127.0.0.1:8766'
                 self.config['allow_lan_http']=False
                 mw.addonManager.writeConfig(NAME,self.config)
         except OSError:
