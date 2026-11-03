@@ -26,7 +26,8 @@ class CompanionFcmService:FirebaseMessagingService() {
         super.onMessageReceived(message)
         if(message.data["kind"]!="anki_changed")return
         val config=Storage(this).connection() ?: return
-        if(message.data["collection_id"]!=config.optString("collection_id","primary"))return
+        val changedCollection=message.data["collection_id"] ?: ""
+        if(changedCollection.isNotEmpty() && changedCollection!=config.optString("collection_id","primary"))return
         FcmRegistration.wake(applicationContext,message.data["sequence"]?.toLongOrNull() ?: 0L)
     }
 
