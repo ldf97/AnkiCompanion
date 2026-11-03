@@ -57,23 +57,24 @@ jobs:
       - run: |
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0'
-      - name: Enable FCM only when owner Firebase client config is available
+      - name: Enable FCM from the Firebase Android client configuration
         env:
           FIREBASE_GOOGLE_SERVICES_JSON: ${{ secrets.FIREBASE_GOOGLE_SERVICES_JSON }}
         run: |
           if [ -n "$FIREBASE_GOOGLE_SERVICES_JSON" ]; then
             printf '%s' "$FIREBASE_GOOGLE_SERVICES_JSON" > android/app/google-services.json
-            python3 - <<'PY'
+          else
+            cp deployment/firebase/android-client.json android/app/google-services.json
+          fi
+          python3 - <<'PY'
           import json
           payload=json.load(open('android/app/google-services.json',encoding='utf-8'))
           packages=[entry.get('client_info',{}).get('android_client_info',{}).get('package_name')
                     for entry in payload.get('client',[])]
+          assert payload['project_info']['project_id']=='ankicompanion', 'Incorrect Firebase project'
           assert 'org.ankicompanion.app' in packages, 'Incorrect Firebase Android package'
-          print('FCM client config present: compiling Firebase-enabled Android app')
+          print('FCM enabled for project ankicompanion and package org.ankicompanion.app')
           PY
-          else
-            echo 'FCM client config not present; testing Firebase-unconfigured fallback'
-          fi
       - working-directory: android
         env:
           APP_VERSION_NAME: 0.1.1
