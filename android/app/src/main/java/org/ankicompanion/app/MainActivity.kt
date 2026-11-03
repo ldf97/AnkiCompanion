@@ -32,7 +32,11 @@ class MainActivity:Activity() {
     private var pendingStudy=false
     private var recoveryPassphrase:String?=null
     private val handler=Handler(Looper.getMainLooper())
-    private val ticker=object:Runnable {override fun run(){if(resumed){refresh();handler.postDelayed(this,5000)}}}
+    private val syncReceiver=object:android.content.BroadcastReceiver() {
+        override fun onReceive(context:android.content.Context,intent:Intent) {
+            storage.load("state.json")?.let{show(it)}
+        }
+    }
     private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
     private fun text(value:String,size:Float=14f)=TextView(this).apply{text=value;textSize=size;setTextColor(Color.rgb(238,230,219));setPadding(0,dp(6),0,dp(6))}
     private fun button(label:String,action:()->Unit)=Button(this).apply{text=label;isAllCaps=false;setTextColor(Color.rgb(238,230,219));setOnClickListener{action()}}
@@ -55,7 +59,7 @@ class MainActivity:Activity() {
         ankidroidUpdateButton=button("AnkiDroid Companion updates"){ankidroidUpdates()};box.addView(ankidroidUpdateButton)
         box.addView(button("Update signing diagnostics"){signingDiagnostics()})
         box.addView(button("Portable recovery · incompatible signing only"){recoveryMenu()})
-        box.addView(button("Live widget updates"){LiveSyncService.start(this)})
+        // FCM wakeups replace the old continuous one-second live polling mode.
         bridge=text("",12f);bridge.setTextColor(Color.rgb(160,164,173));box.addView(bridge)
         box.addView(text("A lesson maintains your streak. Anki decides which cards are available.",12f))
         Sync.schedule(this)
@@ -69,7 +73,11 @@ class MainActivity:Activity() {
         }
     }
     override fun onResume(){
-        super.onResume();resumed=true;handler.removeCallbacks(ticker);handler.post(ticker)
+        super.onResume();resumed=true
+        androidx.core.content.ContextCompat.registerReceiver(this,syncReceiver,
+            android.content.IntentFilter("org.ankicompanion.app.SYNC_COMPLETE"),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+        refresh()
         // Return from Android's one-time "Install unknown apps" permission
         // screen and continue the same verified, already downloaded APK.
         // Do not open a second permission screen if the user declined.
@@ -84,7 +92,7 @@ class MainActivity:Activity() {
             } else storage.setSetting("pending_update_path","")
         }
     }
-    override fun onPause(){resumed=false;handler.removeCallbacks(ticker);super.onPause()}
+    override fun onPause(){resumed=false;unregisterReceiver(syncReceiver);super.onPause()}
     private fun async(work:()->Any?,after:(Any?)->Unit={refresh()}) {
         Sync.executor.execute {
             try {val result=work();runOnUiThread{if(!isFinishing)after(result)}}
@@ -137,7 +145,7 @@ class MainActivity:Activity() {
         }
         val p=value.getJSONObject("progress");val goal=if(value.optString("local_day",value.getString("date"))==value.getString("date"))value.getJSONObject("policy") else value.getJSONObject("settings")
         progress.text="${p.getInt("answers")}/${goal.getInt("lesson_answers")} · ${minOf(100,p.getInt("answers")*100/goal.getInt("lesson_answers"))}% · ${maxOf(0,goal.getInt("lesson_answers")-p.getInt("answers"))} remaining · ${p.getInt("duration_ms")/1000} / ${goal.getInt("lesson_ms")/1000} active seconds · ${value.getInt("streak")} day streak" + if(localPending>0)" (pending confirmation)" else ""
-        bridge.text=storage.getSetting("bridge_status")
+        bridge.text=storage.getSetting("bridge_status")+" · "+storage.getSetting("fcm_status","FCM not configured")
         val line=value.getJSONObject("lineup");val key=line.toString()+value.getBoolean("completed")+value.getInt("streak")+System.currentTimeMillis()/60000
         if(key!=renderedKey) {
             async({Renderer(applicationContext).draw(value,Skins(applicationContext).directory(line.getString("skin_id"),line.getString("skin_version")))}){result->scene.frame=result as Frame;renderedKey=key}
@@ -177,6 +185,7 @@ class MainActivity:Activity() {
                 require(Regex("[A-Za-z0-9_-]{1,100}").matches(pairingCollection)){"Invalid collection ID"}
                 storage.saveConnection(JSONObject().put("url",serverUrl).put("token",pairingToken).put("allow_lan_http",lan.isChecked).put("collection_id",pairingCollection))
                 if(android.os.Build.VERSION.SDK_INT>=33)requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),3)
+                FcmRegistration.ensure(applicationContext)
                 refresh()
             }catch(e:Exception){status.text=e.message}
         }.show()
