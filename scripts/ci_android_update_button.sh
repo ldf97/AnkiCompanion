@@ -57,7 +57,7 @@ adb shell appops set org.ankicompanion.app REQUEST_INSTALL_PACKAGES allow
 # The test finds the actual Android GUI button, clicks it, checks the
 # confirmation, verifies downloaded APK and waits for OS installer UI.
 set +e
-adb shell am instrument -w -e class \
+adb shell am instrument -w -e update_button_phase run -e class \
  org.ankicompanion.app.UpdateButtonClickTest#clickUpdateDownloadsAndOpensSystemInstaller \
  org.ankicompanion.app.test/androidx.test.runner.AndroidJUnitRunner \
  | tee "$OUT/android/update-click.txt"
