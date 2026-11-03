@@ -148,6 +148,7 @@ def test_in_app_windows_update_preserves_server_before_installer_launch(tmp_path
     monkeypatch.setattr(updates.subprocess,'Popen',launch)
     updates.install(package,release)
     assert len(launched)==1
+    assert '/FORCECLOSEAPPLICATIONS' in launched[0][0], 'Our own running server must not prevent a one-click in-place update'
     assert (data/'token.txt').read_bytes()==token
     assert private.read_bytes()==b'original owner artwork'
 
