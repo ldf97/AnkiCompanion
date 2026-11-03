@@ -91,6 +91,20 @@ for ($i=0; $i -lt 180; $i++) {
       if ($current.version -eq '0.1.2') { $upgraded=$true; $versionLocation=$file.FullName; break }
     } catch {}
   }
+  # Some PyInstaller layouts keep the version metadata in the executable
+  # rather than as an on-disk VERSION.json. Inno Setup's registered version
+  # is the OS-authoritative record of an installed bundle upgrade.
+  if (-not $upgraded) {
+    $uninstall='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall'
+    foreach ($entry in @(Get-ChildItem $uninstall -ErrorAction SilentlyContinue)) {
+      $registration=Get-ItemProperty $entry.PSPath -ErrorAction SilentlyContinue
+      if ($registration.DisplayName -eq 'AnkiCompanion' -and $registration.DisplayVersion -eq '0.1.2') {
+        $upgraded=$true
+        $versionLocation=$entry.PSPath
+        break
+      }
+    }
+  }
   if ($upgraded) {break}
   Start-Sleep -Seconds 1
 }
