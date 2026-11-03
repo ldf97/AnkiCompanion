@@ -51,16 +51,19 @@ jobs:
         run: |
           if [ -n "$FIREBASE_GOOGLE_SERVICES_JSON" ]; then
             printf '%s' "$FIREBASE_GOOGLE_SERVICES_JSON" > android/app/google-services.json
-            python3 - <<'PYCONFIG'
+          else
+            cp deployment/firebase/android-client.json android/app/google-services.json
+          fi
+          python3 - <<'PYCONFIG'
           import json
           p='android/app/google-services.json'
           info=json.load(open(p,encoding='utf-8'))
           packages=[a.get('client_info',{}).get('android_client_info',{}).get('package_name')
                     for a in info.get('client',[])]
-          if 'org.ankicompanion.app' not in packages:
-              raise SystemExit('Firebase config has wrong Android package name')
+          if info['project_info']['project_id']!='ankicompanion' or 'org.ankicompanion.app' not in packages:
+              raise SystemExit('Firebase configuration mismatch')
+          print('FCM client configuration embedded in signed release build')
           PYCONFIG
-          fi
       - name: Build with persistent release key
         working-directory: android
         env:
