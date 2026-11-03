@@ -55,7 +55,7 @@ class MainActivity:Activity() {
         box.addView(button("Study next subdeck"){study()}.apply{setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(238,145,71)));setTextColor(Color.rgb(23,18,14))})
         val actions=LinearLayout(this);actions.addView(button("Anki access"){requestAnki()});actions.addView(button("Refresh"){refresh()});actions.addView(button("Sync AnkiDroid"){try{AnkiBridge.nativeSync(this)}catch(e:Exception){status.text=e.message}});box.addView(actions)
         val settings=LinearLayout(this);settings.addView(button("Lesson & day"){goals()});settings.addView(button("Skins"){skins()});box.addView(settings)
-        updateButton=button("Updates · "+BuildConfig.VERSION_NAME){updates()};box.addView(updateButton)
+        updateButton=button("App updates · "+BuildConfig.VERSION_NAME){updates()};box.addView(updateButton)
         ankidroidUpdateButton=button("AnkiDroid Companion updates"){ankidroidUpdates()};box.addView(ankidroidUpdateButton)
         box.addView(button("Update signing diagnostics"){signingDiagnostics()})
         box.addView(button("Portable recovery · incompatible signing only"){recoveryMenu()})
@@ -303,7 +303,7 @@ class MainActivity:Activity() {
                 .setMessage("Use the production-signed ${release.optString("version")} package. Review data stays in AnkiDroid and native AnkiWeb sync.")
                 .setNegativeButton("Later",null).setPositiveButton("Continue"){_,_->
                     status.text="Downloading and checking AnkiDroid Companion…"
-                    async({Updates.download(applicationContext,api(),release)}){file->installDownloaded(file as File)}
+                    async({Updates.download(applicationContext,null,release)}){file->installDownloaded(file as File)}
                 }.show()
         }
     }
@@ -318,7 +318,7 @@ class MainActivity:Activity() {
 
     private fun updates() {
         status.text="Checking GitHub release…"
-        async({Updates.check(applicationContext,api(),true)}){result->
+        async({Updates.check(applicationContext,null,true)}){result->
             val release=result as? JSONObject ?: return@async
             if(!release.optBoolean("available")){status.text=release.optString("message","No newer release");return@async}
             AlertDialog.Builder(this).setTitle("Update to "+release.getString("version")).setMessage(release.optString("notes")+"\nSource commit: "+release.optString("commit")).setNegativeButton("Later",null).setPositiveButton("Update"){_,_->
