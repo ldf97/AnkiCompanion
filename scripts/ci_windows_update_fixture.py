@@ -83,7 +83,8 @@ def _ci_asset_open(opener,request,release):
         Path(os.environ['ANKI_COMPANION_CI_MARKERS'],'launched-verified-installer.txt').write_text(
             f"Qt Update handler launched {package.name}")
         args=[str(package),'/CURRENTUSER','/VERYSILENT','/SUPPRESSMSGBOXES',
-              '/NORESTART','/AUTOUPDATE',
+              '/NORESTART','/AUTOUPDATE','/FORCECLOSEAPPLICATIONS',
+              '/LOGCLOSEAPPLICATIONS',
               '/LOG='+str(Path(os.environ['ANKI_COMPANION_CI_MARKERS'])/'inno-gui-upgrade.log')]
     else:
         args=[str(package),'/CURRENTUSER','/RESTARTAPPLICATIONS']
