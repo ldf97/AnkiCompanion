@@ -15,6 +15,10 @@ adb shell am instrument -w -e upgrade_phase seed -e class \
   org.ankicompanion.app.test/androidx.test.runner.AndroidJUnitRunner \
   | tee "$OUT/android/seed.txt"
 grep -q 'OK (1 test)' "$OUT/android/seed.txt"
+# The data-continuity fixture deliberately uses a minimal cached state.json that
+# the full activity cannot display. Keep its exact bytes in the same private
+# app sandbox during the GUI click, then restore before the OS upgrade.
+adb shell run-as org.ankicompanion.app mv files/state.json files/ci-original-state.json
 
 # Apply a harmless but visible code patch, and build the update with the SAME
 # debug signer on the SAME emulator runner.
@@ -68,6 +72,7 @@ if [[ "$INSTRUMENT_STATUS" != 0 ]] || ! grep -q 'OK (1 test)' "$OUT/android/upda
   exit 1
 fi
 adb pull /sdcard/Android/data/org.ankicompanion.app/files/update-button-acceptance.json "$OUT/android/button-evidence.json"
+adb shell run-as org.ankicompanion.app cp files/ci-original-state.json files/state.json
 # Complete the Android OS installer confirmation. This is a real package
 # manager UI upgrade, not adb install -r.
 for n in {1..45}; do
