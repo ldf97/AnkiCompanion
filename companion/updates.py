@@ -150,4 +150,8 @@ def install(package, release=None):
     preserve_windows_state_before_update()
     # Windows may still ask for an installer/security confirmation. No shell is
     # required, and the normal installer preserves user data across upgrades.
-    subprocess.Popen([str(package),'/CURRENTUSER','/RESTARTAPPLICATIONS'],close_fds=True)
+    # Inno's Restart Manager may not close our own still-running GUI/server fast
+    # enough. Only our installed executables are matched by the installer; the
+    # review ledger has already been snapshotted above. Avoid a second dialog.
+    subprocess.Popen([str(package),'/CURRENTUSER','/RESTARTAPPLICATIONS',
+                      '/FORCECLOSEAPPLICATIONS'],close_fds=True)
