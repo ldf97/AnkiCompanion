@@ -10,6 +10,7 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -39,6 +40,7 @@ class UpdateButtonClickTest {
     }
 
     @Test fun clickUpdateDownloadsAndOpensSystemInstaller() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("update_button_phase")=="run")
         assertEquals("Run the baseline 0.1.1 APK first","0.1.1",BuildConfig.VERSION_NAME)
         UpdateAcceptanceTransport.manifestUrl="http://10.0.2.2:8767/update.json"
         UpdateAcceptanceTransport.assetUrl="http://10.0.2.2:8767/app-patched.apk"
