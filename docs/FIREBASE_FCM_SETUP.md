@@ -26,11 +26,15 @@ phone has been provisioned by this source change.
    No Firestore database, Cloud Functions, or billing account is required for FCM.
 2. Select the **Android app** icon in Project Overview. Android package name is
    **`org.ankicompanion.app`**. Download **`google-services.json`**.
-3. In GitHub repository `ldf97/AnkiCompanion`, go to **Settings → Secrets and
-   variables → Actions → New repository secret**. Name the secret
-   `FIREBASE_GOOGLE_SERVICES_JSON` and paste in the entire contents of the
-   downloaded JSON file. The signed-release workflow will embed it only when
-   building the Android APK. Do **not** commit service-account keys to GitHub.
+3. **Done (2026-11-03):** The uploaded `google-services.json` has been validated
+   against project `ankicompanion` and Android application
+   `org.ankicompanion.app`. The Firebase Android *client* configuration is now
+   stored as `deployment/firebase/android-client.json`. Both CI and release
+   workflows copy it automatically, so no GitHub secret or PowerShell step is
+   required for the Android client. Firebase Android API keys identify the
+   project, not a privileged Firebase Admin session. The Google API key should
+   remain restricted to relevant Firebase APIs. **The separate server-side
+   service-account private key must never be committed.**
 4. In Firebase console open **Project settings → Service accounts → Generate
    new private key**. Save the downloaded service-account JSON *privately* on
    the Windows machine running the companion server.
@@ -59,7 +63,8 @@ phone has been provisioned by this source change.
   able to reach the existing companion server over its HTTPS connection (the
   Firebase push itself does **not** expose the PC or transfer full reviews).
 - The currently installed APK does not gain FCM just because a GitHub source
-  branch exists. Install a signed configured build first.
+  branch exists. Install a signed configured build first. The GitHub debug APK
+  is NOT a guaranteed in-place replacement for an existing release APK.
 - The integration cannot be called *live* until a physical-phone acceptance test
   confirms **PC review → FCM received → WorkManager native sync → widget refreshed**
   without opening the app, including offline/reconnect and locked-screen cases.
