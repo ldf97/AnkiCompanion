@@ -1,6 +1,14 @@
 #ifndef AppVersion
   #define AppVersion "0.1.1"
 #endif
+#ifdef PersonalEren
+  #define InstallerOutputName "AnkiCompanion-Windows-Setup-Eren"
+  #ifnexist "..\packages\Eren-Anki-Private-Skin-1.0.0.zip"
+    #error "Personal installer requested without verified Eren pack"
+  #endif
+#else
+  #define InstallerOutputName "AnkiCompanion-Windows-Setup"
+#endif
 [Setup]
 AppId={{93883A05-5ED4-4148-8E69-B08808B188F8}
 AppName=AnkiCompanion
@@ -12,7 +20,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\packages
-OutputBaseFilename=AnkiCompanion-Windows-Setup
+OutputBaseFilename={#InstallerOutputName}
 Compression=lzma2
 SolidCompression=yes
 CloseApplications=yes
@@ -26,6 +34,10 @@ Source: "..\dist\AnkiCompanionServer\*"; DestDir: "{app}\server"; Flags: recurse
 Source: "..\deployment\*"; DestDir: "{app}\deployment"; Flags: recursesubdirs ignoreversion
 Source: "..\deployment\cloudflared.exe"; DestDir: "{app}\tools"; Flags: ignoreversion
 Source: "..\packages\Anki_Companion_Bridge.ankiaddon"; DestDir: "{app}"
+#ifdef PersonalEren
+; The one-click personal installer MUST contain the actual original artwork.
+Source: "..\packages\Eren-Anki-Private-Skin-1.0.0.zip"; DestDir: "{app}\skins"; Flags: ignoreversion
+#endif
 [Icons]
 Name: "{group}\AnkiCompanion"; Filename: "{app}\desktop\AnkiCompanion.exe"
 Name: "{group}\AnkiCompanion Server"; Filename: "{app}\server\AnkiCompanionServer.exe"

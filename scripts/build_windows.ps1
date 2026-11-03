@@ -1,3 +1,4 @@
+param([switch]$PersonalEren)
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 # Include the verified HTTPS pairing helper inside every update installer.
@@ -22,5 +23,16 @@ if ($LASTEXITCODE -ne 0) { throw 'Server packaging failed' }
 $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
 if (-not (Test-Path $compiler)) { throw 'Install Inno Setup 6 before building the installer.' }
 $version=(Get-Content VERSION.json | ConvertFrom-Json).version
-& $compiler "/DAppVersion=$version" installer/AnkiCompanion.iss
+$innoArgs = @("/DAppVersion=$version")
+if ($PersonalEren) {
+    # Only a bit-identical private pack is valid. This never goes into public git.
+    $skin = Join-Path $PSScriptRoot '..\packages\Eren-Anki-Private-Skin-1.0.0.zip'
+    $expected = '7c25d1434b9971ea89193be60a665b18c0a5ed9be66fa4f92c36c94752dce412'
+    if (-not (Test-Path -LiteralPath $skin)) { throw 'Personal build requires the original Eren ZIP in packages' }
+    if ((Get-FileHash -LiteralPath $skin -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
+        throw 'Personal skin does not match the preserved original pack'
+    }
+    $innoArgs += '/DPersonalEren=1'
+}
+& $compiler @innoArgs installer/AnkiCompanion.iss
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }

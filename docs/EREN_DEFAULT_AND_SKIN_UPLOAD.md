@@ -1,0 +1,11 @@
+# Owner-ready AnkiCompanion: default Eren + independent skin uploads
+
+**Installable-app requirement.** The owner should click one Windows installer. The resulting real desktop app launches the existing server, imports the owner's *original* complete Eren pack, and selects Eren. Android and other clients download the active skin from the authenticated server without hunting for assets. Do not label a neutral-only binary as the owner's Eren-ready application.
+
+**Build-time packaging.** The developer/build system places `Eren-Anki-Private-Skin-1.0.0.zip` into `packages/`, then runs `scripts/build_windows.ps1 -PersonalEren`. The script checks SHA-256 `7c25d1434b9971ea89193be60a665b18c0a5ed9be66fa4f92c36c94752dce412`. Inno Setup includes the untouched original ZIP at `{app}\skins\Eren-Anki-Private-Skin-1.0.0.zip`. The app itself locates, imports and activates it on first launch. The user does not run a PowerShell script, import a ZIP, or install separate skin software.
+
+**Preserved feature: upload new skins.** The desktop app retains `Skins → Import skin ZIP`. The authenticated `POST /v1/skins/import` endpoint installs immutable, separately versioned content and updates the catalog. Clients (including Android) fetch selected skin packs by ID/version. Once another skin has been selected, restarting/updating must never revert to Eren. Neither uploading nor switching skins changes review history, daily goals, server token, or the original Eren ZIP.
+
+**Public-source boundary.** Do not commit the owner's original private Eren images or quotes into the public repository. CI may create the existing functional, neutral test build, but that artifact must not be presented to the owner as the ready-to-install Eren edition. A personalized signed installer still requires a Windows build worker and appropriate signing credentials. Existing debug APK signature continuity and real phone/PC acceptance remain separate requirements.
+
+**Tests.** `tests/test_real_personal_eren_provisioning.py` uses the original private ZIP when provided via `ANKI_COMPANION_ORIGINAL_EREN_ZIP`, confirms exact per-file checksum identity for all 30 files, imports Eren through the real server API, verifies the selected skin renders, then uploads/selects a second skin and restarts. Existing unit/acceptance tests verify unrelated review/streak settings are retained.

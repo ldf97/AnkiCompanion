@@ -22,6 +22,7 @@ def test_finds_only_verified_original_eren_inside_existing_download(tmp_path, mo
 def test_recovers_eren_without_overwriting_study_history(tmp_path, monkeypatch):
     private=b"original-private-pack"
     monkeypatch.setattr(setup, "find_original_eren",lambda:private)
+    monkeypatch.setattr(setup,"data_dir",lambda:tmp_path)
     settings={"skin_id":"study_companion","skin_version":"1.0.0","revision":11,
               "lesson_answers":50,"lesson_ms":300000}
     calls=[]
@@ -38,11 +39,12 @@ def test_recovers_eren_without_overwriting_study_history(tmp_path, monkeypatch):
                 assert data["revision"]==11
                 return data
             raise AssertionError(path)
-    assert setup.recover_eren(Client())=="Eren artwork activated"
+    assert setup.recover_eren(Client())=="Eren artwork activated by default"
     assert [x[0] for x in calls]==["/v1/skins","/v1/skins/import","/v1/settings","/v1/settings"]
 
 
-def test_previously_imported_eren_needs_no_private_file(monkeypatch):
+def test_previously_imported_eren_needs_no_private_file(tmp_path,monkeypatch):
+    monkeypatch.setattr(setup,"data_dir",lambda:tmp_path)
     class Client:
         def request(self,path,method="GET",data=None,**kwargs):
             if path=="/v1/skins":return {"skins":[{"id":"eren_anki","version":"1.0.0"}]}
@@ -71,17 +73,21 @@ def test_private_pairing_never_returns_http_or_unauthorized_url(tmp_path,monkeyp
     assert setup._existing_pairing("new-token") is None
 
 
-def test_relaunch_does_not_override_existing_custom_skin():
+def test_relaunch_does_not_override_existing_custom_skin(tmp_path,monkeypatch):
+    monkeypatch.setattr(setup,"data_dir",lambda:tmp_path)
     class Client:
         def request(self, path, method="GET", data=None, **kwargs):
             if path == "/v1/skins":
                 return {"skins": [{"id": "eren_anki", "version": "1.0.0"},
                                   {"id": "new_custom", "version": "2.0.0"}]}
+            if path == "/v1/settings" and method == "GET":
+                return {"skin_id":"new_custom","skin_version":"2.0.0"}
             raise AssertionError("Bootstrap must not rewrite custom skin selection")
     assert "selected skin preserved" in setup.recover_eren(Client())
 
 
-def test_first_eren_import_preserves_already_selected_custom_skin(monkeypatch):
+def test_first_eren_import_preserves_already_selected_custom_skin(tmp_path,monkeypatch):
+    monkeypatch.setattr(setup,"data_dir",lambda:tmp_path)
     monkeypatch.setattr(setup, "find_original_eren", lambda: b"original-pack")
     selected = {"skin_id": "new_custom", "skin_version": "2.0.0", "lesson_answers": 71}
     writes = []
@@ -173,3 +179,61 @@ def test_gui_setup_repair_is_repeatable_and_never_requires_shell_commands():
     bridge=(Path(__file__).resolve().parents[1]/'desktop/bootstrap.py').read_text()
     assert 'if all((target/n).is_file() and (target/n).read_bytes()==b' in bridge
     assert 'stage.replace(dest)' in bridge
+
+
+def test_installed_personal_eren_precedes_generic_downloads(tmp_path,monkeypatch):
+    """The user installs ONE executable and never hunts for artwork."""
+    original = b"original Eren ZIP bytes for the deterministic fixture"
+    executable = tmp_path/"Programs"/"AnkiCompanion"/"desktop"/"AnkiCompanion.exe"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"dummy-executable")
+    pack = executable.parent.parent/"skins"/"Eren-Anki-Private-Skin-1.0.0.zip"
+    pack.parent.mkdir(parents=True)
+    pack.write_bytes(original)
+    monkeypatch.setattr(setup.sys,"executable",str(executable))
+    monkeypatch.setattr(setup.sys,"frozen",True,raising=False)
+    monkeypatch.setattr(setup,"EREN_SHA256",hashlib.sha256(original).hexdigest())
+    monkeypatch.setattr(setup,"data_dir",lambda:tmp_path/"LocalData")
+    assert setup.find_original_eren() == original
+
+
+def test_existing_eren_pack_becomes_default_once_and_skin_upload_remains(tmp_path,monkeypatch):
+    monkeypatch.setattr(setup,"data_dir",lambda:tmp_path)
+    settings={"skin_id":"study_companion","skin_version":"1.0.0","lesson_answers":30,
+              "lesson_ms":240000,"revision":7}
+    writes=[]
+    class Client:
+        def request(self,path,method="GET",data=None,**kwargs):
+            if path == "/v1/skins":return {"skins":[{"id":"eren_anki","version":"1.0.0"}]}
+            if path == "/v1/settings" and method == "GET":return dict(settings)
+            if path == "/v1/settings" and method == "PUT":
+                writes.append(dict(data));settings.update(data);return dict(data)
+            raise AssertionError(path)
+    client=Client()
+    assert setup.recover_eren(client)=="Eren artwork activated by default"
+    assert len(writes)==1 and writes[0]["skin_id"]=="eren_anki"
+    assert writes[0]["lesson_answers"]==30
+    assert (tmp_path/".personal-eren-default-selected").is_file()
+    # Users can upload/select another skin and restart without reversion.
+    settings.update(skin_id="later_uploaded_skin",skin_version="1.0.0")
+    assert "selected skin preserved" in setup.recover_eren(client)
+    assert settings["skin_id"]=="later_uploaded_skin"
+    assert len(writes)==1
+
+
+def test_personal_installer_is_complete_and_preserves_upload_path():
+    root=__import__('pathlib').Path(__file__).resolve().parents[1]
+    script=(root/'installer/AnkiCompanion.iss').read_text()
+    assert '#ifdef PersonalEren' in script
+    assert 'Eren-Anki-Private-Skin-1.0.0.zip' in script
+    build=(root/'scripts/build_windows.ps1').read_text()
+    assert 'param([switch]$PersonalEren)' in build
+    assert '/DPersonalEren=1' in build and 'Get-FileHash' in build
+    desktop=(root/'desktop/app.py').read_text()
+    server=(root/'server/main.py').read_text()
+    android=(root/'android/app/src/main/java/org/ankicompanion/app/Skins.kt').read_text()
+    # Skin upload is mandatory and stays; the Eren default is not a one-skin lock.
+    assert "Import skin ZIP" in desktop
+    assert "@api.post('/v1/skins/import'" in server
+    assert 'fun ensure(api:Api,id:String,version:String)' in android
+    assert '/v1/skins/$id/$version/pack.zip' in android
