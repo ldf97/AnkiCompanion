@@ -4,6 +4,7 @@ from functools import lru_cache
 import secrets, os, time, threading, json, sys
 from fastapi import FastAPI, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 from companion.packs import Packs
 from companion.rules import scene, next_deck
 from app.widget_engine import WidgetEngine
@@ -11,11 +12,21 @@ from app.skin_packs import PackError
 from .store import Store, Conflict
 from .models import Events, Retractions, Snapshot, Settings, Command
 from .updates import ReleaseFeed,UpdateError
+from .fcm import FcmDispatcher
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA = Path(os.environ.get('LOCALAPPDATA',str(Path.home()/'.local/share')))/'AnkiCompanion/server' if getattr(sys,'frozen',False) else ROOT/'data'
 
-def create_app(data_dir=None, token=None, clock=None):
+class PushRegistration(BaseModel):
+    device_id: str = Field(min_length=1,max_length=100,pattern=r'^[A-Za-z0-9_-]+$')
+    collection_id: str = Field(default='primary',min_length=1,max_length=100,pattern=r'^[A-Za-z0-9_-]+$')
+    fcm_token: str = Field(min_length=32,max_length=4096,pattern=r'^\S+$')
+
+class PushTest(BaseModel):
+    device_id: str = Field(min_length=1,max_length=100,pattern=r'^[A-Za-z0-9_-]+$')
+
+
+def create_app(data_dir=None, token=None, clock=None, fcm_send=None):
     data = Path(data_dir or os.environ.get('ANKI_COMPANION_DATA', DEFAULT_DATA))
     data.mkdir(parents=True, exist_ok=True)
     token_file = data/'token.txt'
@@ -37,6 +48,12 @@ def create_app(data_dir=None, token=None, clock=None):
     api = FastAPI(title='Anki Companion', version='0.1.0', docs_url=None, redoc_url=None, openapi_url=None)
     api.state.store = store; api.state.packs = packs
     api.state.feed=feed
+    push=FcmDispatcher(store,data,send=fcm_send)
+    api.state.fcm=push
+
+    def publish_mutation(sequence_before):
+        # Send only committed, durable changes, never on card-answer UI path.
+        push.publish(store.new_push_changes(sequence_before))
 
     def auth(authorization: str = Header(default='')):
         if not secrets.compare_digest(authorization, 'Bearer ' + token):
@@ -52,6 +69,26 @@ def create_app(data_dir=None, token=None, clock=None):
 
     @api.get('/health')
     def health(): return {'status':'ok'}
+
+    @api.get('/v1/push/status', dependencies=[Depends(auth)])
+    def push_status(): return push.status()
+
+    @api.post('/v1/push/reload', dependencies=[Depends(auth)])
+    def push_reload(): return push.reload()
+
+    @api.post('/v1/push/register', dependencies=[Depends(auth)])
+    def push_register(registration:PushRegistration):
+        store.register_push(registration.device_id,registration.collection_id,
+                            registration.fcm_token)
+        return {'ok':True, 'configured':push.configured}
+
+    @api.post('/v1/push/test', dependencies=[Depends(auth)])
+    def push_test(request:PushTest):
+        if not push.configured:
+            raise HTTPException(503,'FCM service account has not been configured on Windows')
+        if not push.test(request.device_id):
+            raise HTTPException(404,'That Android device has not registered an FCM token')
+        return {'queued':True,'delivered':False}
 
     @api.get('/v1/updates/{platform}',dependencies=[Depends(auth)])
     def updates(platform:str,current:str='0.0.0',build:int=0,force:bool=False):
@@ -95,14 +132,21 @@ def create_app(data_dir=None, token=None, clock=None):
     @api.put('/v1/settings', dependencies=[Depends(auth)])
     def settings(body: Settings):
         packs.get(body.skin_id, body.skin_version)
-        return store.update_settings(body.model_dump(), packs=packs, now_ms=now())
+        before=store.change_sequence()
+        result=store.update_settings(body.model_dump(), packs=packs, now_ms=now())
+        publish_mutation(before)
+        return result
 
     @api.get('/v1/settings', dependencies=[Depends(auth)])
     def read_settings(): return store.settings()
 
     @api.post('/v1/events', dependencies=[Depends(auth)])
     def events(body: Events):
-        try: return store.add_events(body.events, packs, now(),body.device_id)
+        try:
+            before=store.change_sequence()
+            result=store.add_events(body.events, packs, now(),body.device_id)
+            publish_mutation(before)
+            return result
         except Conflict: raise
         except ValueError as exc: raise HTTPException(400,str(exc)) from exc
 
@@ -113,16 +157,26 @@ def create_app(data_dir=None, token=None, clock=None):
 
     @api.post('/v1/events/retract', dependencies=[Depends(auth)])
     def retract(body: Retractions):
-        try: store.retract(body.ids,body.device_id,now())
+        try:
+            before=store.change_sequence()
+            store.retract(body.ids,body.device_id,now())
+            publish_mutation(before)
         except ValueError as exc: raise HTTPException(400,str(exc)) from exc
         return {'ok':True}
 
     @api.post('/v1/snapshots', dependencies=[Depends(auth)])
     def snapshot(body: Snapshot):
-        store.snapshot(body,now()); return {'ok':True}
+        before=store.change_sequence()
+        store.snapshot(body,now())
+        publish_mutation(before)
+        return {'ok':True}
 
     @api.post('/v1/commands', dependencies=[Depends(auth)])
-    def command(body: Command): return {'id':store.enqueue(body,now())}
+    def command(body: Command):
+        before=store.change_sequence()
+        identity=store.enqueue(body,now())
+        publish_mutation(before)
+        return {'id':identity}
 
     @api.get('/v1/commands/{device}', dependencies=[Depends(auth)])
     def commands(device: str): return {'commands':store.commands(device,now())}
@@ -159,7 +213,9 @@ def create_app(data_dir=None, token=None, clock=None):
                 temp.flush()
                 temp.close()
                 with render_lock: result=packs.install(path)
+                before=store.change_sequence()
                 store.notify_catalog_change()
+                publish_mutation(before)
                 return {'id':result['id'],'version':result['version'],'name':result['name']}
             finally:
                 temp.close()
@@ -183,7 +239,7 @@ def create_app(data_dir=None, token=None, clock=None):
 def main():
     import argparse,uvicorn
     parser=argparse.ArgumentParser(description='Personal Anki Companion server')
-    parser.add_argument('--host',default='127.0.0.1');parser.add_argument('--port',type=int,default=int(os.environ.get('PORT','8765')))
+    parser.add_argument('--host',default='127.0.0.1');parser.add_argument('--port',type=int,default=int(os.environ.get('PORT','8766' if sys.platform == 'win32' else '8765')))
     parser.add_argument('--data',default=str(DEFAULT_DATA));args=parser.parse_args()
     app=create_app(args.data)
     print('Pairing token is stored in',Path(args.data).resolve()/'token.txt')
