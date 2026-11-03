@@ -77,10 +77,13 @@ object FcmRegistration {
         if(store.connection()==null)return
         val previous=store.getSetting("fcm_requested_sequence","0").toLongOrNull() ?: 0L
         if(sequence>previous)store.setSetting("fcm_requested_sequence",sequence.toString())
-        val work=OneTimeWorkRequestBuilder<FcmSyncWorker>()
+        val builder=OneTimeWorkRequestBuilder<FcmSyncWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            .build()
+        // Pre-Android 12 expedited work requires a foreground notification;
+        // use a normal one-off job there rather than failing without one.
+        if(android.os.Build.VERSION.SDK_INT>=31)
+            builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+        val work=builder.build()
         // KEEP coalesces a burst of card answers; the worker checks whether a
         // higher sequence arrived while it was already synchronizing.
         WorkManager.getInstance(context).enqueueUniqueWork("companion_fcm_sync",ExistingWorkPolicy.KEEP,work)
@@ -94,7 +97,7 @@ class FcmSyncWorker(context:Context,params:WorkerParameters):Worker(context,para
         return try {
             repeat(3) {
                 val before=store.getSetting("fcm_requested_sequence","0")
-                Sync.run(applicationContext)
+                if(Sync.run(applicationContext,requireFresh=true)==null)return Result.retry()
                 if(store.getSetting("sync_error").isNotEmpty())return Result.retry()
                 if(store.getSetting("fcm_requested_sequence","0")==before) {
                     store.setSetting("fcm_applied_sequence",before)
