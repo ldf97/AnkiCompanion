@@ -29,6 +29,7 @@ object Sync {
     }
     fun run(context:Context):JSONObject? {
         val store=Storage(context);val config=store.connection() ?: return null
+        FcmRegistration.ensure(context)
         if(!running.compareAndSet(false,true))return store.load("state.json")
         try {
             val api=Api(config);val outbox=Outbox(context)
