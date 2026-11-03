@@ -94,7 +94,23 @@ for ($i=0; $i -lt 180; $i++) {
   if ($upgraded) {break}
   Start-Sleep -Seconds 1
 }
-if (-not $upgraded) { throw 'Qt Update launched the installer, but patched v0.1.2 was not installed' }
+if (-not $upgraded) {
+  $log=Join-Path $out 'inno-gui-upgrade.log'
+  if (Test-Path $log) {
+    Write-Host '---- Inno auto-update installer diagnostics ----'
+    Get-Content $log | Select-Object -Last 100
+  } else {
+    Write-Host 'Inno auto-update log was not created; process launch may have failed'
+  }
+  Write-Host '---- Installed version manifests ----'
+  Get-ChildItem (Join-Path $program 'desktop') -Recurse -Filter VERSION.json -ErrorAction SilentlyContinue |
+    ForEach-Object { Write-Host $_.FullName; Get-Content $_.FullName | Select-Object -First 5 }
+  Write-Host '---- Related Windows processes ----'
+  Get-CimInstance Win32_Process | Where-Object {
+    $_.Name -match 'AnkiCompanion|Inno|Setup'
+  } | Select-Object ProcessId,Name,ExecutablePath | Format-Table -AutoSize
+  throw 'Qt Update launched the installer, but patched v0.1.2 was not installed'
+}
 if ((Get-FileHash $tokenFile -Algorithm SHA256).Hash -ne $tokenHash) { throw 'Pairing token changed during GUI update' }
 if ((Get-FileHash $art -Algorithm SHA256).Hash -ne $artHash) { throw 'Private skin bytes changed during GUI update' }
 # Verify the genuine review survived, even after the server restarts.
