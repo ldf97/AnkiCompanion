@@ -21,3 +21,7 @@ skins/eren_anki/
 reference/
 saved_state/
 previews/
+
+# Personal Firebase configuration, never commit service-account credentials
+android/app/google-services.json
+**/firebase-service-account.json
