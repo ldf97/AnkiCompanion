@@ -1,0 +1,22 @@
+name: Build signed FCM candidate once
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fcm-signed-candidate-once.yml'
+
+# Triggered once when this file is first merged into main. It does NOT
+# publish or replace an existing Android installation.
+permissions:
+  contents: read
+concurrency:
+  group: fcm-signed-candidate-once
+  cancel-in-progress: false
+jobs:
+  candidate:
+    uses: ./.github/workflows/release-candidate.yml
+    with:
+      version: '1.0.10'
+      build: 100010
+      publish: false
+    secrets: inherit
