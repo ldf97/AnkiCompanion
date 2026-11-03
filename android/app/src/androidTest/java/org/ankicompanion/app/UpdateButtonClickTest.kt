@@ -62,7 +62,7 @@ class UpdateButtonClickTest {
         // AOSP renders AlertDialog actions as "UPDATE" on some API levels.
         // The system resource id is more stable than case-sensitive text.
         val positive=device.wait(Until.findObject(By.res("android:id/button1")),10000)
-            ?: device.findObject(By.textMatches("(?i)^update$"))
+            ?: device.findObject(By.text(java.util.regex.Pattern.compile("(?i)^update$")))
         assertNotNull("No Update confirmation button",positive)
         positive.click()
 
