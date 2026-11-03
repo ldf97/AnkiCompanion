@@ -31,6 +31,9 @@ class Store:
             CREATE TABLE IF NOT EXISTS snapshots(device TEXT PRIMARY KEY, payload TEXT NOT NULL, updated INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY, device TEXT NOT NULL,
                 payload TEXT NOT NULL, created INTEGER NOT NULL, acknowledged INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS push_devices(
+                device_id TEXT PRIMARY KEY, collection_id TEXT NOT NULL,
+                fcm_token TEXT NOT NULL, updated_ms INTEGER NOT NULL);
             -- Native collection sync must succeed before announcing a scheduling revision.
             CREATE TABLE IF NOT EXISTS sync_versions(collection TEXT PRIMARY KEY,
                 revision INTEGER NOT NULL DEFAULT 0);
@@ -123,6 +126,50 @@ class Store:
                 query='SELECT 1 FROM change_events WHERE '+' AND '.join(clauses)+' LIMIT 1'
                 relevant=db.execute(query,args).fetchone() is not None
             return {'sequence':current,'changed':bool(relevant or reset),'reset':bool(reset)}
+
+    def register_push(self, device_id, collection_id, fcm_token):
+        with self.tx() as db:
+            db.execute('INSERT INTO push_devices VALUES (?,?,?,?) '
+                       'ON CONFLICT(device_id) DO UPDATE SET '
+                       'collection_id=excluded.collection_id, '
+                       'fcm_token=excluded.fcm_token, updated_ms=excluded.updated_ms',
+                       (device_id,collection_id,fcm_token,int(time.time()*1000)))
+
+    def push_count(self):
+        with sqlite3.connect(self.path,timeout=5) as db:
+            return db.execute('SELECT COUNT(*) FROM push_devices').fetchone()[0]
+
+    def push_token(self, device_id):
+        with sqlite3.connect(self.path,timeout=5) as db:
+            db.row_factory=sqlite3.Row
+            row=db.execute('SELECT * FROM push_devices WHERE device_id=?',(device_id,)).fetchone()
+            return dict(row) if row else None
+
+    def remove_push_token(self, device_id, token):
+        with self.tx() as db:
+            db.execute('DELETE FROM push_devices WHERE device_id=? AND fcm_token=?',
+                       (device_id,token))
+
+    def new_push_changes(self, since):
+        with sqlite3.connect(self.path,timeout=5) as db:
+            db.row_factory=sqlite3.Row
+            return [dict(row) for row in db.execute(
+                'SELECT seq,collection,origin_device,target_device,kind '
+                'FROM change_events WHERE seq>? ORDER BY seq',(since,))]
+
+    def push_targets(self, change):
+        with sqlite3.connect(self.path,timeout=5) as db:
+            db.row_factory=sqlite3.Row
+            clauses=['1=1']; args=[]
+            if change['origin_device']:
+                clauses.append('device_id!=?');args.append(change['origin_device'])
+            if change['collection']:
+                clauses.append('collection_id=?');args.append(change['collection'])
+            if change['target_device']:
+                clauses.append('device_id=?');args.append(change['target_device'])
+            return [dict(row) for row in db.execute(
+                'SELECT device_id,collection_id,fcm_token AS token FROM push_devices WHERE '
+                +' AND '.join(clauses),args)]
 
     def notify_catalog_change(self):
         with self.tx() as db:self._notify_change(db,kind='skin')
