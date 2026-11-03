@@ -14,6 +14,25 @@ import androidx.core.content.FileProvider
 import org.json.JSONObject
 import java.io.File
 
+/**
+ * Only instrumentation in a debuggable build may redirect the release transport
+ * to the Android emulator's host loopback. Production APKs always use GitHub.
+ * The exact same checksum, package, version and signer checks remain in force.
+ */
+internal object UpdateAcceptanceTransport {
+    @Volatile var manifestUrl: String? = null
+    @Volatile var assetUrl: String? = null
+
+    fun emulatorUrl(value: String?): String? {
+        if(!BuildConfig.DEBUG || value==null)return null
+        val uri=java.net.URI(value)
+        require(uri.scheme=="http" && uri.host=="10.0.2.2"
+            && uri.port in 1024..65535 && uri.rawUserInfo==null
+            && uri.rawFragment==null){"Test URLs must use emulator host loopback"}
+        return value
+    }
+}
+
 object Updates {
     fun check(context:Context,api:Api?=null,force:Boolean=false):JSONObject? {
         val store=Storage(context);val cached=store.load("update.json")
@@ -59,7 +78,9 @@ object Updates {
         } catch(e:PackageManager.NameNotFoundException){"Not installed"}
     }
     private fun githubRelease(platform:String="android",context:Context?=null):JSONObject {
-        val request=java.net.URL("https://github.com/ldf97/AnkiCompanion/releases/latest/download/update.json").openConnection() as java.net.HttpURLConnection
+        val source=UpdateAcceptanceTransport.emulatorUrl(UpdateAcceptanceTransport.manifestUrl)
+            ?: "https://github.com/ldf97/AnkiCompanion/releases/latest/download/update.json"
+        val request=java.net.URL(source).openConnection() as java.net.HttpURLConnection
         request.connectTimeout=12000;request.readTimeout=15000
         val data=request.inputStream.use{source->
             val out=java.io.ByteArrayOutputStream()
@@ -122,7 +143,8 @@ object Updates {
             try {
                 val digest=java.security.MessageDigest.getInstance("SHA-256")
                 var total=0L
-                (java.net.URL(address).openConnection() as java.net.HttpURLConnection).apply{
+                val source=UpdateAcceptanceTransport.emulatorUrl(UpdateAcceptanceTransport.assetUrl) ?: address
+                (java.net.URL(source).openConnection() as java.net.HttpURLConnection).apply{
                     connectTimeout=15000;readTimeout=60000
                 }.inputStream.use{input->temp.outputStream().use{output->
                     val buf=ByteArray(65536)
