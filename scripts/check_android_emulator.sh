@@ -5,7 +5,30 @@ bash gradlew --no-daemon installDebug installDebugAndroidTest
 mkdir -p app/build/emulator-evidence
 adb shell am instrument -w org.ankicompanion.app.test/androidx.test.runner.AndroidJUnitRunner | tee app/build/emulator-evidence/instrumentation.txt
 python3 -c 'from pathlib import Path; s=Path("app/build/emulator-evidence/instrumentation.txt").read_text(); assert "OK (" in s and "FAILURES" not in s, s'
-adb pull /sdcard/Android/data/org.ankicompanion.app/files/evidence app/build/emulator-evidence/
+# Dedicated randomized-streak visual acceptance on one REAL Android emulator.
+# Two UI screenshots are captured by UiAutomation, not generated illustrations.
+if [[ "${1:-}" == "35" ]]; then
+  adb shell am instrument -w -e class org.ankicompanion.app.WidgetStreakTransitionTest \
+    org.ankicompanion.app.test/androidx.test.runner.AndroidJUnitRunner \
+    | tee app/build/emulator-evidence/streak-instrumentation.txt
+  grep -q 'OK (1 test)' app/build/emulator-evidence/streak-instrumentation.txt
+fi
+# Evidence copying is diagnostic only. On API28 the emulator can shut down
+# AFTER instrumentation reports OK, making adb pull fail despite passing tests.
+# Preserve the substantive instrumentation result instead of a false CI fail.
+if ! adb pull /sdcard/Android/data/org.ankicompanion.app/files/evidence app/build/emulator-evidence/; then
+  printf 'Optional evidence pull unavailable after passing instrumentation tests\n' > app/build/emulator-evidence/evidence-pull-warning.txt
+fi
+if [[ "${1:-}" == "35" ]]; then
+  # Screenshot extraction is REQUIRED for the requested visual acceptance.
+  # A passing test without captured images is not sufficient evidence.
+  for picture in before.png after.png result.json; do
+    test -s "app/build/emulator-evidence/evidence/streak-random/$picture" || {
+      echo "Missing actual Android screenshot/evidence: $picture" >&2
+      exit 1
+    }
+  done
+fi
 
 
 # Same-signer in-place Android upgrade acceptance, not reinstall/restore.

@@ -52,7 +52,7 @@ class CompanionWidget:AppWidgetProvider() {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
 
-        fun buildViews(context:Context,state:org.json.JSONObject?):RemoteViews {
+        fun buildViews(context:Context,state:org.json.JSONObject?,outboxDatabaseName:String="reviews.db"):RemoteViews {
             val store=Storage(context)
             val views=RemoteViews(context.packageName,R.layout.widget)
             val intent=widgetIntent(context,state)
@@ -61,7 +61,7 @@ class CompanionWidget:AppWidgetProvider() {
             for(viewId in intArrayOf(R.id.widget_root,R.id.widget_image,R.id.widget_status,R.id.widget_warning))
                 views.setOnClickPendingIntent(viewId,tap)
             if(state!=null) {
-                val local=Outbox(context).use{it.overlay(state)};val lineup=state.getJSONObject("lineup")
+                val local=Outbox(context,outboxDatabaseName).use{it.overlay(state)};val lineup=state.getJSONObject("lineup")
                 val frame=Renderer(context).draw(local,Skins(context).directory(lineup.getString("skin_id"),lineup.getString("skin_version")),false)
                 val bitmap=Bitmap.createScaledBitmap(frame.image,650,277,true);views.setImageViewBitmap(R.id.widget_image,bitmap)
                 // Launcher-hosted ViewFlipper animates only while visible; no timer wakes the phone.
