@@ -15,7 +15,7 @@ import org.json.JSONObject
 import java.io.File
 
 object Updates {
-    fun check(context:Context,api:Api,force:Boolean=false):JSONObject? {
+    fun check(context:Context,api:Api?=null,force:Boolean=false):JSONObject? {
         val store=Storage(context);val cached=store.load("update.json")
         if(!force && cached!=null && System.currentTimeMillis()-cached.optLong("checked_ms")<60*60*1000)return cached
         // Updates are fetched directly from the public release channel,
@@ -109,7 +109,7 @@ object Updates {
             .setContentText("Version "+result.optString("version")+" · tap to update").setContentIntent(intent).setAutoCancel(true).build()
         manager.notify(notificationId,notice)
     }
-    fun download(context:Context,api:Api,release:JSONObject):File {
+    fun download(context:Context,api:Api?,release:JSONObject):File {
         require(release.getBoolean("available")){"No update available"}
         val target=release.optString("target_package",context.packageName)
         require(target==context.packageName || target=="com.ichi2.anki.companion"){"Unknown update package"}
@@ -135,7 +135,7 @@ object Updates {
                 require(total==release.getLong("size") && hex==release.getString("sha256")){"Release checksum mismatch"}
                 require(temp.renameTo(dest)){"Could not finalize APK download"}
             } finally {temp.delete()}
-        } else api.download(release.getString("download_path"),dest,release.getString("sha256"),200L*1024*1024)
+        } else requireNotNull(api){"Legacy update needs a paired server; GitHub releases do not"}.download(release.getString("download_path"),dest,release.getString("sha256"),200L*1024*1024)
         val flags=if(Build.VERSION.SDK_INT>=28)PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
         val info=context.packageManager.getPackageArchiveInfo(dest.path,flags) ?: error("Invalid APK")
         require(info.packageName==target){"Update has a different package ID"}
