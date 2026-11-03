@@ -1,7 +1,8 @@
-"""Self-contained Windows setup. Run by the app, not by the user.
+"""Self-contained Windows bootstrap. Run automatically by the GUI.
 
-The public release never contains private Eren artwork or pairing credentials.
-Only recover the original verified Eren ZIP from files already on this PC.
+Personal installers include the verified original Eren pack beside their app
+binary, so the owner never has to find, import or select it manually. Public
+source builds use a complete neutral fallback and still support skin uploads.
 """
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
@@ -147,9 +148,16 @@ def ensure_server():
 
 
 def _private_candidates():
-    """Look only in common owner download locations, never crawl the whole disk."""
+    """Find the verified pack in the actual installer FIRST, then older bundles.
+
+    No filesystem crawl: packaged art is always in the app installation and
+    user-provided legacy bundles are checked only in predictable locations.
+    """
     home = Path.home()
-    directories = [home / "Downloads", home / "Desktop", home / "Documents",
+    executable = Path(sys.executable).resolve()
+    install_root = executable.parent.parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
+    directories = [install_root / "skins", install_root / "packages", install_root,
+                   home / "Downloads", home / "Desktop", home / "Documents",
                    data_dir(), Path(os.environ.get("USERPROFILE", str(home))) / "Downloads"]
     patterns = ("Eren-Anki-Private-Skin-1.0.0.zip",
                 "AnkiCompanion*Eren*.zip",
@@ -200,26 +208,39 @@ def find_original_eren():
 
 
 def recover_eren(client):
-    """Recover the original pack once without changing later dropdown choices."""
+    """Provision Eren as the personal install default exactly once.
+
+    New personal installs have the original ZIP within the installer; Android
+    subsequently receives that very same pack from the authenticated server.
+    Subsequent custom skin choices must never be reset at app restart/update.
+    """
     installed = client.request("/v1/skins")
     exists = any(s["id"] == "eren_anki" and s["version"] == "1.0.0"
                  for s in installed.get("skins", []))
-    if exists:
+    if not exists:
+        data = find_original_eren()
+        if data is None:
+            return "Eren is unavailable: this installer contains no verified Eren skin; upload remains available"
+        imported = client.request("/v1/skins/import", "POST", data,
+                                  content_type="application/zip")
+        if imported.get("id") != "eren_anki" or imported.get("version") != "1.0.0":
+            raise RuntimeError("The verified Eren skin was rejected by the server")
+
+    # Old installs may have imported the art without selecting it. Mark the
+    # one-time selection, so choosing another skin later remains authoritative.
+    marker = data_dir() / ".personal-eren-default-selected"
+    if marker.exists():
         return "Eren artwork available; selected skin preserved"
-    data = find_original_eren()
-    if data is None:
-        return "Original Eren ZIP was not found among files already on this PC"
-    imported = client.request("/v1/skins/import", "POST", data,
-                              content_type="application/zip")
-    if imported.get("id") != "eren_anki":
-        raise RuntimeError("The original Eren skin was rejected by the server")
     settings = client.request("/v1/settings")
-    # First import activates Eren only for untouched neutral defaults.
     if settings.get("skin_id") in (None, "", "study_companion"):
-        settings.update(skin_id="eren_anki", skin_version="1.0.0")
-        client.request("/v1/settings", "PUT", settings)
-        return "Eren artwork activated"
-    return "Eren artwork imported; selected skin preserved"
+        updated = dict(settings, skin_id="eren_anki", skin_version="1.0.0")
+        client.request("/v1/settings", "PUT", updated)
+        result = "Eren artwork activated by default"
+    else:
+        result = "Eren artwork available; selected skin preserved"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("Personal skin default provisioned; do not reset user skin choices.\n", encoding="utf-8")
+    return result
 
 
 def addon_archive():
