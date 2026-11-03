@@ -78,7 +78,7 @@ def _ci_asset_open(opener,request,release):
                 f"Verified SHA-256: {digest.hexdigest()} / {size} bytes")
         return dest''')
     source=replace(source,
-        "    subprocess.Popen([str(package),'/CURRENTUSER','/RESTARTAPPLICATIONS'],close_fds=True)",
+        "    subprocess.Popen([str(package),'/CURRENTUSER','/RESTARTAPPLICATIONS',\n                      '/FORCECLOSEAPPLICATIONS'],close_fds=True)",
         """    if os.environ.get('ANKI_COMPANION_CI_UPGRADE')=='1':
         Path(os.environ['ANKI_COMPANION_CI_MARKERS'],'launched-verified-installer.txt').write_text(
             f"Qt Update handler launched {package.name}")
@@ -87,7 +87,8 @@ def _ci_asset_open(opener,request,release):
               '/LOGCLOSEAPPLICATIONS',
               '/LOG='+str(Path(os.environ['ANKI_COMPANION_CI_MARKERS'])/'inno-gui-upgrade.log')]
     else:
-        args=[str(package),'/CURRENTUSER','/RESTARTAPPLICATIONS']
+        args=[str(package),'/CURRENTUSER','/RESTARTAPPLICATIONS',
+              '/FORCECLOSEAPPLICATIONS']
     subprocess.Popen(args,close_fds=True)""")
     UPDATES.write_text(source,encoding='utf-8')
 
