@@ -1,7 +1,12 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
-// The public CI build has no personal Firebase project. When the owner adds
-// google-services.json, the next signed app build enables FCM automatically.
-if (file("google-services.json").exists()) {
+// Use the owner's Firebase Android *client* configuration in every build,
+// including emulator integration tests. No service-account secrets live here.
+val firebaseClient = rootProject.file("../deployment/firebase/android-client.json")
+val googleServices = file("google-services.json")
+if (!googleServices.exists() && firebaseClient.isFile) {
+    firebaseClient.copyTo(googleServices)
+}
+if (googleServices.exists()) {
     apply(plugin = "com.google.gms.google-services")
 }
 
