@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBo
     QLabel,QPushButton,QLineEdit,QCheckBox,QComboBox,QSpinBox,QFormLayout,QDialog,
     QDialogButtonBox,QSystemTrayIcon,QMenu,QMessageBox,QFileDialog,QProgressBar)
 from companion.transport import Client
+from companion.ports import LOCAL_URL, migrate_local_url
 from companion.packs import Packs
 from companion.rules import scene, daily_lineup, study_day, lesson_progress
 from app.widget_engine import WidgetEngine
@@ -101,13 +102,17 @@ class Window(QMainWindow):
         self.storage.mkdir(parents=True,exist_ok=True)
         self.config_path=self.storage/'connection.json';self.state_path=self.storage/'state.json'
         self.config=json.loads(self.config_path.read_text()) if self.config_path.exists() else {}
+        previous_url=self.config.get('url')
+        self.config['url']=migrate_local_url(previous_url) if previous_url else self.config.get('url')
+        if previous_url and previous_url!=self.config.get('url'):
+            write_json(self.config_path,self.config,private=True)
         # First-run Windows connection is localhost; no token transcription.
         if not self.config.get('token'):
             local=Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / 'AnkiCompanion' / 'server' / 'token.txt'
             if local.is_file():
                 token=local.read_text(encoding='utf-8').strip()
                 if len(token)>=16:
-                    self.config=dict(url='http://127.0.0.1:8765',token=token,allow_lan_http=False)
+                    self.config=dict(url=LOCAL_URL,token=token,allow_lan_http=False)
                     write_json(self.config_path,self.config,private=True)
         self.current=json.loads(self.state_path.read_text()) if self.state_path.exists() else None
         self.packs=Packs(ROOT/'skins',self.storage/'packs');self.jobs=[];self.syncing=False;self.quitting=False;self.last_key=None
@@ -121,6 +126,7 @@ class Window(QMainWindow):
         connect=QPushButton('Connection');connect.clicked.connect(self.connect_dialog);head.addWidget(connect)
         pairing=QPushButton('Pair phone');pairing.clicked.connect(self.show_pairing);head.addWidget(pairing)
         move_cloud=QPushButton('Export to Google Cloud');move_cloud.clicked.connect(self.export_google_cloud);head.addWidget(move_cloud)
+        firebase=QPushButton('Firebase push');firebase.clicked.connect(self.configure_firebase);head.addWidget(firebase)
         box.addLayout(head)
         self.panel=Panel();box.addWidget(self.panel,1)
         self.status=QLabel('Connect your server to begin.');self.status.setWordWrap(True);box.addWidget(self.status)
@@ -142,6 +148,9 @@ class Window(QMainWindow):
         # periodically without asking the owner to run commands or copy files.
         self.bridge_timer=QTimer(self);self.bridge_timer.timeout.connect(self.ensure_bridge_periodic)
         if autostart and sys.platform=='win32':self.bridge_timer.start(10*60*1000)
+        self.maintenance_timer=QTimer(self);self.maintenance_timer.timeout.connect(self.ensure_local_server_periodic)
+        if autostart and sys.platform=='win32':self.maintenance_timer.start(60*1000)
+        self._last_notified_release=None
         self.update_timer=QTimer(self);self.update_timer.timeout.connect(lambda:self.check_updates(False))
         if autostart:self.update_timer.start(15*60*1000);QTimer.singleShot(3000,lambda:self.check_updates(False))
         self.timer=QTimer(self);self.timer.timeout.connect(self.refresh)
@@ -169,6 +178,15 @@ class Window(QMainWindow):
         job=self.launch(first_run.ensure_anki_bridge,completed)
         job.finished.connect(lambda:setattr(self,'_bridge_repair_running',False))
 
+    def ensure_local_server_periodic(self):
+        """Keep Windows coordination available after sleep, crash or OS restart."""
+        if (sys.platform!='win32' or first_run.has_remote_connection(self.config) or
+                getattr(self,'_bootstrapping',False) or getattr(self,'_server_repair_running',False)):
+            return
+        self._server_repair_running=True
+        job=self.launch(first_run.ensure_server,lambda _token: self.refresh())
+        job.finished.connect(lambda:setattr(self,'_server_repair_running',False))
+
     def bootstrap_local(self):
         """Self-repair without overwriting a saved hosted connection."""
         if first_run.has_remote_connection(self.config):
@@ -182,14 +200,14 @@ class Window(QMainWindow):
         self.status.setText('Connecting to your local AnkiCompanion server…')
         def ready(value):
             self._bootstrapping=False
-            self.config={k:value[k] for k in ('url','token','allow_lan_http')}
+            self.config.update({k:value[k] for k in ('url','token','allow_lan_http')})
             write_json(self.config_path,self.config,private=True)
             self.status.setText(value['skin_message']+' · '+value.get('bridge_message',''))
             self.refresh()
         job=self.launch(first_run.bootstrap,ready)
         job.failed.connect(lambda _:setattr(self,'_bootstrapping',False))
 
-    def client(self):return Client(self.config.get('url','http://127.0.0.1:8765'),self.config.get('token',''),self.config.get('allow_lan_http',False))
+    def client(self):return Client(self.config.get('url',LOCAL_URL),self.config.get('token',''),self.config.get('allow_lan_http',False))
     def launch(self,fn,success=None):
         job=Job(fn,self);self.jobs.append(job)
         job.succeeded.connect(success or (lambda result:self.refresh()))
@@ -313,9 +331,36 @@ class Window(QMainWindow):
                 'Delete your local ZIP after the migration is verified.')
         self.launch(lambda:first_run.export_hosted_state(filename),finished)
 
+    def configure_firebase(self):
+        """The Firebase service-account key stays on this PC, never in GitHub."""
+        if self.config.get('url',LOCAL_URL).rstrip('/') != LOCAL_URL:
+            QMessageBox.warning(self,'Firebase push',
+                'Connect to this PC’s local server before importing its Firebase key.');return
+        selected,_=QFileDialog.getOpenFileName(self,'Choose Firebase service-account JSON',
+            str(Path.home()/'Downloads'),'JSON files (*.json)')
+        if not selected:return
+        try:
+            source=Path(selected)
+            if source.stat().st_size > 64*1024:raise ValueError('Unexpected Firebase key file size')
+            config=json.loads(source.read_text(encoding='utf-8'))
+            if not (config.get('type')=='service_account' and
+                    config.get('project_id') and config.get('private_key') and
+                    config.get('client_email')):
+                raise ValueError('Select the service-account JSON from Firebase Project Settings, not google-services.json')
+            target=first_run.data_dir()/'firebase-service-account.json'
+            write_json(target,config,private=True)
+            status=self.client().request('/v1/push/reload','POST')
+            if not status.get('configured'):raise RuntimeError('Firebase credential not activated')
+            QMessageBox.information(self,'Firebase push',
+                'Windows Firebase sender configured for '+config['project_id']+'. '
+                'The Android APK must also be built with this project’s google-services.json. '
+                'Once you connect the phone, its FCM token is registered automatically.')
+        except Exception as exc:
+            QMessageBox.warning(self,'Firebase push',str(exc))
+
     def connect_dialog(self):
         dialog=QDialog(self);dialog.setWindowTitle('Connect companion server');form=QFormLayout(dialog)
-        url=QLineEdit(self.config.get('url','http://127.0.0.1:8765'));token=QLineEdit(self.config.get('token',''));token.setEchoMode(QLineEdit.EchoMode.Password)
+        url=QLineEdit(self.config.get('url',LOCAL_URL));token=QLineEdit(self.config.get('token',''));token.setEchoMode(QLineEdit.EchoMode.Password)
         lan=QCheckBox('Allow HTTP on a trusted local network');lan.setChecked(self.config.get('allow_lan_http',False))
         form.addRow('Server URL',url);form.addRow('Pairing token',token);form.addRow(lan)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel);form.addRow(buttons);buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject)
@@ -367,7 +412,9 @@ class Window(QMainWindow):
             self.update_button.setText(('Update Windows bundle to '+release['version']) if release.get('available') else ('Windows bundle up to date · '+updates.version()['version']))
             if release.get('available'):
                 if not interactive:
-                    if self.tray.isVisible():self.tray.showMessage('Anki Companion update','Version '+release['version']+' is ready. Open the app and click Update.')
+                    if self.tray.isVisible() and self._last_notified_release!=release['version']:
+                        self._last_notified_release=release['version']
+                        self.tray.showMessage('Anki Companion update','Version '+release['version']+' is ready. Open the app and click Update.')
                     return
                 components=updates.component_update_summary(
                     release,remote_server=first_run.has_remote_connection(self.config))
@@ -387,7 +434,7 @@ class Window(QMainWindow):
         event.ignore()
         self.show_dock()
     def quit_app(self):
-        self.quitting=True;self.timer.stop();self.update_timer.stop();self.bridge_timer.stop();self.hide();self.dock.hide();self.tray.hide()
+        self.quitting=True;self.timer.stop();self.update_timer.stop();self.maintenance_timer.stop();self.bridge_timer.stop();self.hide();self.dock.hide();self.tray.hide()
         # Let network workers finish before destroying their QThread objects.
         if self.jobs:QTimer.singleShot(100,self.quit_app)
         else:QApplication.instance().quit()

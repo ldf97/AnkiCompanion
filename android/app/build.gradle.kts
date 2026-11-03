@@ -1,4 +1,15 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
+// Use the owner's Firebase Android *client* configuration in every build,
+// including emulator integration tests. No service-account secrets live here.
+val firebaseClient = rootProject.file("../deployment/firebase/android-client.json")
+val googleServices = file("google-services.json")
+if (!googleServices.exists() && firebaseClient.isFile) {
+    firebaseClient.copyTo(googleServices)
+}
+if (googleServices.exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 android {
     namespace = "org.ankicompanion.app"
     compileSdk = 35
@@ -35,6 +46,9 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("com.caverock:androidsvg-aar:1.4")
+    implementation(platform("com.google.firebase:firebase-bom:35.0.2"))
+    implementation("com.google.firebase:firebase-messaging")
+    implementation("androidx.work:work-runtime:2.10.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

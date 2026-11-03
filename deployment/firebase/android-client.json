@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "899490092033",
+    "project_id": "ankicompanion",
+    "storage_bucket": "ankicompanion.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:899490092033:android:b1a71fbdf28569cc4e9c00",
+        "android_client_info": {
+          "package_name": "org.ankicompanion.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDTBVsS3p6Ya1Sbm6HA0BlrIKajnBGO3LQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

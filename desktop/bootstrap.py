@@ -17,11 +17,11 @@ import tempfile
 import time
 
 from companion.transport import Client
+from companion.ports import LOCAL_URL, migrate_local_url
 
 EREN_SHA256 = "7c25d1434b9971ea89193be60a665b18c0a5ed9be66fa4f92c36c94752dce412"
 CLOUDFLARED_SHA256 = "547057326266f0e1c7d50d102dbd22ff283d740c055bd61e94f10e2c606f89af"
 PAIRING_HOST = re.compile(r"^https://[a-z0-9-]+\.trycloudflare\.com$")
-LOCAL_URL = "http://127.0.0.1:8765"
 
 def has_remote_connection(config):
     """Keep an explicitly configured remote connection on Windows restarts.
@@ -76,9 +76,40 @@ def _healthy(url=LOCAL_URL, timeout=1.5):
         return False
 
 
+def retire_legacy_windows_server():
+    """Retire only an authenticated legacy Companion process, never AnkiConnect."""
+    if sys.platform != 'win32':
+        return False
+    token_path=data_dir()/'token.txt'
+    if not token_path.is_file():return False
+    token=token_path.read_text(encoding='utf-8').strip()
+    if len(token)<16:return False
+    try:Client('http://127.0.0.1:8765',token).request('/v1/state')
+    except Exception:return False
+    executable=server_executable().resolve()
+    if not executable.is_file():
+        raise RuntimeError('Old Companion server detected, but executable could not be verified')
+    script=("$p=[IO.Path]::GetFullPath($env:ANKICOMPANION_SERVER_BIN); "
+            "$found=@(Get-CimInstance Win32_Process -Filter \"Name='AnkiCompanionServer.exe'\" | "
+            "Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -ieq $p }); "
+            "if ($found.Count -ne 1) { exit 3 }; "
+            "$found | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop }")
+    result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',script],
+                          env={**os.environ,'ANKICOMPANION_SERVER_BIN':str(executable)},
+                          capture_output=True,text=True,timeout=20)
+    if result.returncode!=0:
+        raise RuntimeError('Could not safely retire the legacy Companion process')
+    for _ in range(20):
+        try:Client('http://127.0.0.1:8765',token).request('/v1/state')
+        except Exception:return True
+        time.sleep(0.2)
+    raise RuntimeError('Legacy Companion server has not released port 8765')
+
+
 def ensure_server():
     """Start packaged server when it is missing, keeping the same token/data."""
     home = data_dir()
+    retire_legacy_windows_server()
     if not _healthy():
         executable = server_executable()
         if not executable.is_file():
@@ -220,6 +251,30 @@ def ensure_anki_bridge():
         try:
             if info.is_file() and json.loads(info.read_text(encoding='utf-8')).get('package')=='anki_companion_bridge':
                 target=candidate;break
+        except (OSError,ValueError):pass
+    # Preserve all existing Anki add-on options, migrating only the loopback port.
+    target.mkdir(exist_ok=True)
+    config_path=target/'config.json'
+    if config_path.is_file():
+        try:
+            existing=json.loads(config_path.read_text(encoding='utf-8'))
+            if isinstance(existing,dict):
+                existing['server_url']=migrate_local_url(existing.get('server_url'))
+                files['config.json']=json.dumps(existing,indent=2).encode('utf-8')
+        except (OSError,ValueError):pass
+    metadata=target/'meta.json'
+    if metadata.is_file():
+        try:
+            saved=json.loads(metadata.read_text(encoding='utf-8'))
+            settings=saved.get('config') if isinstance(saved,dict) else None
+            if isinstance(settings,dict):
+                old_url=settings.get('server_url')
+                new_url=migrate_local_url(old_url)
+                if old_url!=new_url:
+                    settings['server_url']=new_url
+                    stage=metadata.with_suffix('.json.new')
+                    stage.write_text(json.dumps(saved,indent=2),encoding='utf-8')
+                    stage.replace(metadata)
         except (OSError,ValueError):pass
     if all((target/n).is_file() and (target/n).read_bytes()==b for n,b in files.items()):
         return 'Anki desktop bridge installed'
