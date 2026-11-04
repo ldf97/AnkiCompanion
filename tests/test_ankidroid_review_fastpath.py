@@ -32,7 +32,10 @@ def test_both_reviewer_styles_have_review_and_undo_hooks():
     overlay = (ROOT / "ankidroid_bridge" / "apply.py").read_text()
     assert 'putBoolean("newReviewer"' not in source
     assert "legacy=base+'Reviewer.kt'" in overlay
-    assert "CompanionIntegration.isCurrent(card)" in overlay
+    assert "val latest = getCard(card.id)" in overlay
+    assert "latest.reps != card.reps" in overlay
+    assert "if (answer == null)" in overlay
+    assert "CompanionIntegration.isCurrent(card)" not in overlay
     # All reviewer answer/undo hooks must return immediately, with wake IPC
     # and native sync orchestration queued on the IO dispatcher.
     assert overlay.count("CompanionIntegration.reviewChanged()") == 6
