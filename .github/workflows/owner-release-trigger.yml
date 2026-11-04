@@ -54,6 +54,11 @@ jobs:
   publish-signed-release:
     needs: [signing-preflight]
     if: github.event.comment.body == '/publish-release v0.1.2 build=3'
+    # Reusable workflows cannot elevate GITHUB_TOKEN permissions above those
+    # granted to their caller. Only the exact owner-authenticated publish
+    # command gets contents:write; prepare/read remains read-only.
+    permissions:
+      contents: write
     uses: ./.github/workflows/release-candidate.yml
     with:
       version: '0.1.2'
