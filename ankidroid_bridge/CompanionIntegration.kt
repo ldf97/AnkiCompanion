@@ -31,6 +31,7 @@ object CompanionIntegration {
     private val queued = AtomicBoolean(false)
     private val requested = AtomicBoolean(false)
     private val reviewEventQueued = AtomicBoolean(false)
+    private val reviewEventPending = AtomicBoolean(false)
     @Volatile private var app: Context? = null
     private val registered = AtomicBoolean(false)
     private val visibleReviewers = AtomicInteger(0)
@@ -106,13 +107,20 @@ object CompanionIntegration {
      * native review history rather than relying on individual broadcast data.
      */
     fun reviewChanged() {
+        reviewEventPending.set(true)
         if (!reviewEventQueued.compareAndSet(false, true)) return
         scope.launch {
             try {
-                changed()
-                requestSync()
+                do {
+                    reviewEventPending.set(false)
+                    changed()
+                    requestSync()
+                } while (reviewEventPending.get())
             } finally {
                 reviewEventQueued.set(false)
+                // Don't lose a review that committed while the wake job
+                // was finishing. The eventual revlog scan is idempotent.
+                if (reviewEventPending.get()) reviewChanged()
             }
         }
     }
