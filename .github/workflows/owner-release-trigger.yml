@@ -37,7 +37,7 @@ jobs:
           if not match:
               raise SystemExit('Invalid owner release command; only exact version/build format is accepted')
           operation, version, build = match.groups()
-          if not (3 <= int(build) <= 999999):
+          if not (3 <= int(build) <= 1000000000):
               raise SystemExit('Build must be at least 3 and within Android version code limits')
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
               print('version=' + version, file=output)

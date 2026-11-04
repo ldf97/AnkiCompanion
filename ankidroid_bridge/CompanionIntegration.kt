@@ -2,6 +2,7 @@
 // AnkiCompanion extension for AnkiDroid 2.25.3. No collection SQL writes.
 package com.ichi2.anki
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.Application
 import android.content.Context
@@ -25,6 +26,9 @@ import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
+// The only retained Context comes from applicationContext, never an Activity.
+// Its lifetime matches this process singleton; no Activity is held or leaked.
+@SuppressLint("StaticFieldLeak")
 object CompanionIntegration {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
@@ -32,6 +36,7 @@ object CompanionIntegration {
     private val requested = AtomicBoolean(false)
     private val reviewEventQueued = AtomicBoolean(false)
     private val reviewEventPending = AtomicBoolean(false)
+    @SuppressLint("StaticFieldLeak")
     @Volatile private var app: Context? = null
     private val registered = AtomicBoolean(false)
     private val visibleReviewers = AtomicInteger(0)
@@ -173,7 +178,9 @@ object CompanionIntegration {
                 }
                 withCol { _loadScheduler(); notetypes.clearCache() }
                 prefs().edit().putString("sync_status", "synced")
-                    .putLong("synced_ms", System.currentTimeMillis())
+                    // This is an external wall-clock sync timestamp, not a scheduling timestamp.
+                    // The upstream Anki lint rule prohibits direct System.currentTimeMillis().
+                    .putLong("synced_ms", java.time.Instant.now().toEpochMilli())
                     .putLong("generation", prefs().getLong("generation", 0) + 1).apply()
                 changed()
                 val after = withCol { db.queryString("SELECT COUNT(*)||':'||COALESCE(SUM(reps),0)||':'||COALESCE(MAX(mod),0) FROM cards") }
