@@ -4,9 +4,11 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def test_modified_ankidroid_no_network_sync_in_card_answer_and_before_review():
     source=(ROOT/'ankidroid_bridge'/'CompanionIntegration.kt').read_text()
-    pre=source.split('suspend fun beforeReview()',1)[1].split('fun history(',1)[0]
-    assert 'synchronize(notifyUi = false)' not in pre
-    current=source.split('suspend fun isCurrent(',1)[1].split('suspend fun beforeReview',1)[0]
+    # No network I/O is permitted on a normal card transition. The
+    # full tree selection now runs only after the current queue is exhausted.
+    pre=source.split('suspend fun advanceWhenEmpty()',1)[1].split('fun history(',1)[0]
+    assert 'synchronize(' not in pre
+    current=source.split('suspend fun isCurrent(',1)[1].split('suspend fun advanceWhenEmpty',1)[0]
     assert 'synchronize(' not in current
     overlay=(ROOT/'ankidroid_bridge'/'apply.py').read_text()
     assert 'sched.answerCard(answer)' in overlay
