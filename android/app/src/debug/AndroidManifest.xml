@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Emulator-only transport for a local release fixture. Never merged into release APKs. -->
+    <application android:usesCleartextTraffic="true"/>
+</manifest>
