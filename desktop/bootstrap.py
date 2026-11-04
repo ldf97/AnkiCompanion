@@ -109,7 +109,19 @@ def retire_legacy_windows_server():
 def ensure_server():
     """Start packaged server when it is missing, keeping the same token/data."""
     home = data_dir()
-    retire_legacy_windows_server()
+    # AnkiConnect owns 8765; this generation runs on 8766. An orphaned
+    # legacy Companion process must never prevent a healthy new server from
+    # connecting, or block launching a fresh server on a different port.
+    if not _healthy():
+        try:
+            retire_legacy_windows_server()
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+            # Best-effort legacy cleanup; the old process may be held alive by
+            # a previous startup task. Retrying 8765 is NOT a prerequisite for
+            # starting our actual server on 8766. The app's Connection panel
+            # remains available for legacy-port diagnostics.
+            import logging
+            logging.warning("Legacy Companion cleanup deferred: %s", exc)
     if not _healthy():
         executable = server_executable()
         if not executable.is_file():
