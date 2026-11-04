@@ -43,12 +43,21 @@ def apply(root):
             state = queueState.await()
         }
         if (state == null) {''')
-    edit(vm,'        val state = queueState.await() ?: return\n        val card = currentCard.await()','''        val state = queueState.await() ?: return
-        val card = currentCard.await()
-        if (!com.ichi2.anki.CompanionIntegration.isCurrent(card)) {
+    # Validate staleness inside the scheduler's existing collection transaction.
+    # This removes an extra withCol acquisition from every answer press.
+    edit(vm,'        val answer =\n            withCol {\n                sched.answerCard(',
+         '''        val answer =
+            withCol {
+                val latest = getCard(card.id)
+                if (latest.reps != card.reps || latest.mod != card.mod ||
+                    latest.queue != card.queue || latest.due != card.due) null
+                else sched.answerCard(''')
+    edit(vm,'        undoableOp(handler = this) { sched.answerCard(answer) }',
+         '''        if (answer == null) {
             updateCurrentCard()
             return
-        }''')
+        }
+        undoableOp(handler = this) { sched.answerCard(answer) }''')
     edit(vm,'        undoableOp(handler = this) { sched.answerCard(answer) }',
          '        undoableOp(handler = this) { sched.answerCard(answer) }\n'
          '        com.ichi2.anki.CompanionIntegration.reviewChanged()')
