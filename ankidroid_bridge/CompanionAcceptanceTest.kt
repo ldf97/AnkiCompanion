@@ -88,10 +88,16 @@ class CompanionAcceptanceTest : InstrumentedTest() {
         control("/test/phone-ready",JSONObject())
         awaitCondition("Companion observer did not start"){control("/test/status").optBoolean("observer_ready")}
         awaitCondition("Desktop's first 20 answers were not produced"){control("/test/status").getInt("phase")==20}
+        // Simulate the stock deck-picker/AnkiActivity lifecycle request before
+        // entering the reviewer. In normal use AnkiActivity triggers this
+        // automatically; this fixture directly launches CardViewerActivity,
+        // bypassing that lifecycle. Native sync must finish while the reviewer
+        // is NOT visible so card presses never contend with a network sync.
+        CompanionIntegration.requestSync()
+        awaitCondition("Initial background sync did not import 20 desktop reviews"){
+            runBlocking{withCol{db.queryScalar("SELECT COUNT(*) FROM revlog WHERE ease>0")}}==20
+        }
         ActivityScenario.launch<CardViewerActivity>(ReviewerFragment.getIntent(testContext)).use { scenario ->
-            awaitCondition("First desktop reviews were not imported automatically"){
-                runBlocking{withCol{db.queryScalar("SELECT COUNT(*) FROM revlog WHERE ease>0")}}==20
-            }
             repeat(10){index->
                 // Read the visible card before pressing Show Answer. Button
                 // presence alone does not prove the initial WebView has loaded.
