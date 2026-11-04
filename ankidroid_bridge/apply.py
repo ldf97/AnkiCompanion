@@ -51,10 +51,9 @@ def apply(root):
         }''')
     edit(vm,'        undoableOp(handler = this) { sched.answerCard(answer) }',
          '        undoableOp(handler = this) { sched.answerCard(answer) }\n'
-         '        com.ichi2.anki.CompanionIntegration.changed()\n'
-         '        com.ichi2.anki.CompanionIntegration.requestSync()')
-    edit(vm,'        actionFeedbackFlow.emit(tryUndo())','        actionFeedbackFlow.emit(tryUndo())\n        com.ichi2.anki.CompanionIntegration.changed()\n        com.ichi2.anki.CompanionIntegration.requestSync()')
-    edit(vm,'        actionFeedbackFlow.emit(tryRedo())','        actionFeedbackFlow.emit(tryRedo())\n        com.ichi2.anki.CompanionIntegration.changed()\n        com.ichi2.anki.CompanionIntegration.requestSync()')
+         '        com.ichi2.anki.CompanionIntegration.reviewChanged()')
+    edit(vm,'        actionFeedbackFlow.emit(tryUndo())','        actionFeedbackFlow.emit(tryUndo())\n        com.ichi2.anki.CompanionIntegration.reviewChanged()')
+    edit(vm,'        actionFeedbackFlow.emit(tryRedo())','        actionFeedbackFlow.emit(tryRedo())\n        com.ichi2.anki.CompanionIntegration.reviewChanged()')
     # Both the legacy and the new AnkiDroid reviewers need identical
     # review/undo/redo and exhaustion hooks. Do NOT force the newer interface
     # in configure(): retain the owner's regular AnkiDroid UI preference.
@@ -72,22 +71,19 @@ def apply(root):
         currentCard = state?.topCard
         queueState = state''')
     edit(legacy,'        // showing the timebox reached dialog if the timebox is reached',
-         '''        CompanionIntegration.changed()
-        CompanionIntegration.requestSync()
+         '''        CompanionIntegration.reviewChanged()
 
         // showing the timebox reached dialog if the timebox is reached''')
     edit(legacy,'    fun redo() {\n        launchCatchingTask { redoAndShowSnackbar(ACTION_SNACKBAR_TIME) }',
          '''    fun redo() {
         launchCatchingTask {
             redoAndShowSnackbar(ACTION_SNACKBAR_TIME)
-            CompanionIntegration.changed()
-            CompanionIntegration.requestSync()
+            CompanionIntegration.reviewChanged()
         }''')
     viewer=base+'AbstractFlashcardViewer.kt'
     edit(viewer,'            undoAndShowSnackbar(duration = Reviewer.ACTION_SNACKBAR_TIME)',
          '''            undoAndShowSnackbar(duration = Reviewer.ACTION_SNACKBAR_TIME)
-            CompanionIntegration.changed()
-            CompanionIntegration.requestSync()''')
+            CompanionIntegration.reviewChanged()''')
     provider=base+'provider/CardContentProvider.kt'
     edit(provider,'        val col = getColUnsafe()\n        Timber.d(getLogMessage("query", uri))','''        if (uri.path == "/companion_revlog") return com.ichi2.anki.CompanionIntegration.history(uri)
         val col = getColUnsafe()
