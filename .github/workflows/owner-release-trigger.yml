@@ -1,67 +1,64 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Connector-safe release entrypoint. The ChatGPT GitHub connector can post
-# issue comments but has no workflow_dispatch or GitHub Secrets write action.
-# Only the repository owner, on a dedicated issue, can request a build.
+# Connector bridge: owner-only GitHub issue comments dispatch the existing
+# signed release workflow. Never interpret untrusted comment text as shell.
 name: Owner-controlled signed release
 on:
   issue_comment:
     types: [created]
+
 permissions:
   contents: read
 
 jobs:
-  signing-preflight:
+  dispatch:
     if: >-
       github.repository == 'ldf97/AnkiCompanion' &&
       github.event.issue.number == 23 &&
       !github.event.issue.pull_request &&
       github.event.comment.user.login == github.repository_owner &&
-      (github.event.comment.body == '/prepare-release v0.1.2 build=3' ||
-       github.event.comment.body == '/publish-release v0.1.2 build=3')
+      (startsWith(github.event.comment.body, '/prepare-release ') ||
+       startsWith(github.event.comment.body, '/publish-release '))
+    permissions:
+      contents: read
+      actions: write
     runs-on: ubuntu-24.04
-    environment: signing
     steps:
-      - name: Check persistent Android signing credentials without disclosing them
+      - name: Validate owner comment (no shell interpolation)
+        id: request
         shell: bash
         env:
-          SIGNING_BUNDLE: ${{ secrets.ANDROID_SIGNING_BUNDLE }}
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          RELEASE_REQUEST: ${{ github.event.comment.body }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          # Exact syntax: /prepare-release v0.1.2 build=3
+          command = os.environ['RELEASE_REQUEST']
+          match = re.fullmatch(r'/(prepare|publish)-release v(\d+\.\d+\.\d+) build=(\d+)', command)
+          if not match:
+              raise SystemExit('Invalid owner release command; only exact version/build format is accepted')
+          operation, version, build = match.groups()
+          if not (3 <= int(build) <= 999999):
+              raise SystemExit('Build must be at least 3 and within Android version code limits')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              print('version=' + version, file=output)
+              print('build=' + build, file=output)
+              print('publish=' + ('true' if operation == 'publish' else 'false'), file=output)
+          print('Validated ' + operation + ' request for v' + version + ' build ' + build)
+          PY
+      - name: Dispatch existing signed release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.request.outputs.version }}
+          BUILD: ${{ steps.request.outputs.build }}
+          PUBLISH: ${{ steps.request.outputs.publish }}
+        shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "$SIGNING_BUNDLE" && -z "$KEYSTORE_BASE64" ]]; then
-            echo "::error::Missing persistent Android signing key in environment 'signing'. Add ANDROID_SIGNING_BUNDLE or Android keystore and credentials in GitHub Settings > Environments > signing."
-            exit 1
-          fi
-          if [[ -z "$SIGNING_BUNDLE" ]] && { [[ -z "$STORE_PASSWORD" ]] || [[ -z "$KEY_PASSWORD" ]] || [[ -z "$KEY_ALIAS" ]]; }; then
-            echo "::error::Incomplete Android signing configuration; store password, key password, and alias are required."
-            exit 1
-          fi
-          echo "Persistent Android signing material is configured (no credentials printed)."
-
-  prepare-signed-candidate:
-    needs: [signing-preflight]
-    if: github.event.comment.body == '/prepare-release v0.1.2 build=3'
-    uses: ./.github/workflows/release-candidate.yml
-    with:
-      version: '0.1.2'
-      build: 3
-      publish: false
-    secrets: inherit
-
-  publish-signed-release:
-    needs: [signing-preflight]
-    if: github.event.comment.body == '/publish-release v0.1.2 build=3'
-    # Reusable workflows cannot elevate GITHUB_TOKEN permissions above those
-    # granted to their caller. Only the exact owner-authenticated publish
-    # command gets contents:write; prepare/read remains read-only.
-    permissions:
-      contents: write
-    uses: ./.github/workflows/release-candidate.yml
-    with:
-      version: '0.1.2'
-      build: 3
-      publish: true
-    secrets: inherit
+          # Explicit workflow_dispatch is permitted to start another workflow
+          # with GITHUB_TOKEN. No secret keys or arbitrary issue text are passed.
+          gh workflow run release-candidate.yml --ref main \
+            --raw-field "version=$VERSION" \
+            --raw-field "build=$BUILD" \
+            --raw-field "publish=$PUBLISH"
+          echo "Submitted release candidate workflow; publish=$PUBLISH"
