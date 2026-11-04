@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Connector-safe release entrypoint. The ChatGPT GitHub connector can post
+# issue comments but has no workflow_dispatch or GitHub Secrets write action.
+# Only the repository owner, on a dedicated issue, can request a build.
+name: Owner-controlled signed release
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+
+jobs:
+  signing-preflight:
+    if: >-
+      github.repository == 'ldf97/AnkiCompanion' &&
+      github.event.issue.number == 23 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == github.repository_owner &&
+      (github.event.comment.body == '/prepare-release v0.1.2 build=3' ||
+       github.event.comment.body == '/publish-release v0.1.2 build=3')
+    runs-on: ubuntu-24.04
+    environment: signing
+    steps:
+      - name: Check persistent Android signing credentials without disclosing them
+        shell: bash
+        env:
+          SIGNING_BUNDLE: ${{ secrets.ANDROID_SIGNING_BUNDLE }}
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SIGNING_BUNDLE" && -z "$KEYSTORE_BASE64" ]]; then
+            echo "::error::Missing persistent Android signing key in environment 'signing'. Add ANDROID_SIGNING_BUNDLE or Android keystore and credentials in GitHub Settings > Environments > signing."
+            exit 1
+          fi
+          if [[ -z "$SIGNING_BUNDLE" ]] && { [[ -z "$STORE_PASSWORD" ]] || [[ -z "$KEY_PASSWORD" ]] || [[ -z "$KEY_ALIAS" ]]; }; then
+            echo "::error::Incomplete Android signing configuration; store password, key password, and alias are required."
+            exit 1
+          fi
+          echo "Persistent Android signing material is configured (no credentials printed)."
+
+  prepare-signed-candidate:
+    needs: [signing-preflight]
+    if: github.event.comment.body == '/prepare-release v0.1.2 build=3'
+    uses: ./.github/workflows/release-candidate.yml
+    with:
+      version: '0.1.2'
+      build: 3
+      publish: false
+    secrets: inherit
+
+  publish-signed-release:
+    needs: [signing-preflight]
+    if: github.event.comment.body == '/publish-release v0.1.2 build=3'
+    uses: ./.github/workflows/release-candidate.yml
+    with:
+      version: '0.1.2'
+      build: 3
+      publish: true
+    secrets: inherit
