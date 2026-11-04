@@ -32,6 +32,21 @@ object Sync {
         FcmRegistration.ensure(context)
         if(!running.compareAndSet(false,true))return if(requireFresh)null else store.load("state.json")
         try {
+            // A separate widget process must not read the Anki collection,
+            // scan revlog, enumerate decks or launch native sync while the
+            // reviewer is visible. Any ContentProvider collection lock can
+            // stall the next-card/answer button. The native bridge broadcasts
+            // again after the reviewer closes and completes its pending sync.
+            val reviewing=try {
+                AnkiBridge.capabilities(context)?.getBoolean("reviewer_active",false)==true
+            } catch(_:Exception) { false }
+            if(reviewing) {
+                store.setSetting("bridge_status","Studying: native history and scheduling sync deferred until review closes")
+                CompanionWidget.refresh(context)
+                return store.load("state.json")?.let { cached ->
+                    Outbox(context).use { out -> out.overlay(cached) }
+                }
+            }
             val api=Api(config);val outbox=Outbox(context)
             try {
                 AnkiBridge.refreshNative(context)
