@@ -35,7 +35,14 @@ def apply(root):
         companionPageReady = true''')
     edit(vm,'changes.studyQueues -> updateCurrentCard()',
          'changes.studyQueues -> if (companionPageReady) updateCurrentCard()')
-    edit(vm,'        Timber.v("ReviewerViewModel::updateCurrentCard")','        Timber.v("ReviewerViewModel::updateCurrentCard")\n        com.ichi2.anki.CompanionIntegration.beforeReview()')
+    # Normal card transitions must execute the stock AnkiDroid hot path.
+    # Only on an exhausted queue is a subdeck tree scan permitted.
+    edit(vm,'        val state = queueState.await()\n        if (state == null) {','''        var state = queueState.await()
+        if (state == null && com.ichi2.anki.CompanionIntegration.advanceWhenEmpty()) {
+            queueState = asyncIO { withCol { sched.currentQueueState() } }
+            state = queueState.await()
+        }
+        if (state == null) {''')
     edit(vm,'        val state = queueState.await() ?: return\n        val card = currentCard.await()','''        val state = queueState.await() ?: return
         val card = currentCard.await()
         if (!com.ichi2.anki.CompanionIntegration.isCurrent(card)) {
@@ -48,6 +55,39 @@ def apply(root):
          '        com.ichi2.anki.CompanionIntegration.requestSync()')
     edit(vm,'        actionFeedbackFlow.emit(tryUndo())','        actionFeedbackFlow.emit(tryUndo())\n        com.ichi2.anki.CompanionIntegration.changed()\n        com.ichi2.anki.CompanionIntegration.requestSync()')
     edit(vm,'        actionFeedbackFlow.emit(tryRedo())','        actionFeedbackFlow.emit(tryRedo())\n        com.ichi2.anki.CompanionIntegration.changed()\n        com.ichi2.anki.CompanionIntegration.requestSync()')
+    # Both the legacy and the new AnkiDroid reviewers need identical
+    # review/undo/redo and exhaustion hooks. Do NOT force the newer interface
+    # in configure(): retain the owner's regular AnkiDroid UI preference.
+    legacy=base+'Reviewer.kt'
+    edit(legacy,'        val state =\n            withCol {\n                sched.currentQueueState()?.apply {',
+         '        var state =\n            withCol {\n                sched.currentQueueState()?.apply {')
+    edit(legacy,'        currentCard = state?.topCard\n        queueState = state',
+         '''        if (state == null && CompanionIntegration.advanceWhenEmpty()) {
+            state = withCol {
+                sched.currentQueueState()?.apply {
+                    topCard.renderOutput(this@withCol, reload = true)
+                }
+            }
+        }
+        currentCard = state?.topCard
+        queueState = state''')
+    edit(legacy,'        // showing the timebox reached dialog if the timebox is reached',
+         '''        CompanionIntegration.changed()
+        CompanionIntegration.requestSync()
+
+        // showing the timebox reached dialog if the timebox is reached''')
+    edit(legacy,'    fun redo() {\n        launchCatchingTask { redoAndShowSnackbar(ACTION_SNACKBAR_TIME) }',
+         '''    fun redo() {
+        launchCatchingTask {
+            redoAndShowSnackbar(ACTION_SNACKBAR_TIME)
+            CompanionIntegration.changed()
+            CompanionIntegration.requestSync()
+        }''')
+    viewer=base+'AbstractFlashcardViewer.kt'
+    edit(viewer,'            undoAndShowSnackbar(duration = Reviewer.ACTION_SNACKBAR_TIME)',
+         '''            undoAndShowSnackbar(duration = Reviewer.ACTION_SNACKBAR_TIME)
+            CompanionIntegration.changed()
+            CompanionIntegration.requestSync()''')
     provider=base+'provider/CardContentProvider.kt'
     edit(provider,'        val col = getColUnsafe()\n        Timber.d(getLogMessage("query", uri))','''        if (uri.path == "/companion_revlog") return com.ichi2.anki.CompanionIntegration.history(uri)
         val col = getColUnsafe()
