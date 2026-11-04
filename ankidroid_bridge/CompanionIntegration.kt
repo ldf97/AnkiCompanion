@@ -73,6 +73,8 @@ object CompanionIntegration {
         putBoolean("history", true)
         putBoolean("native_sync", true)
         putBoolean("enabled", enabled())
+        // Lightweight IPC status: no Anki collection query or mutex required.
+        putBoolean("reviewer_active", visibleReviewers.get() > 0)
         putString("sync_status", if (app == null) "not initialized" else prefs().getString("sync_status", "not yet synced"))
         putLong("synced_ms", if (app == null) 0 else prefs().getLong("synced_ms", 0))
         putLong("generation", if (app == null) 0 else prefs().getLong("generation", 0))
