@@ -323,7 +323,7 @@ class MainActivity:Activity() {
             if(!release.optBoolean("available")){status.text=release.optString("message","No newer release");return@async}
             AlertDialog.Builder(this).setTitle("Update to "+release.getString("version")).setMessage(release.optString("notes")+"\nSource commit: "+release.optString("commit")).setNegativeButton("Later",null).setPositiveButton("Update"){_,_->
                 status.text="Downloading and verifying update…"
-                async({Updates.download(applicationContext,api(),release)}){file->installDownloaded(file as File)}
+                async({Updates.download(applicationContext,null,release)}){file->installDownloaded(file as File)}
             }.show()
         }
     }
