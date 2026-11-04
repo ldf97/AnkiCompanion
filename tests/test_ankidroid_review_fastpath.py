@@ -42,6 +42,8 @@ def test_both_reviewer_styles_have_review_and_undo_hooks():
     assert "fun reviewChanged()" in source
     assert "scope.launch {" in source
     assert "reviewEventQueued.compareAndSet(false, true)" in source
+    assert "reviewEventPending.set(true)" in source
+    assert "if (reviewEventPending.get()) reviewChanged()" in source
     assert "CompanionIntegration.requestSync()" in overlay
     assert "AbstractFlashcardViewer.kt" in overlay
     assert "suspend fun isCurrent(" in source
