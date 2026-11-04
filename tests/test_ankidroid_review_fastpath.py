@@ -45,3 +45,16 @@ def test_both_reviewer_styles_have_review_and_undo_hooks():
     assert "CompanionIntegration.requestSync()" in overlay
     assert "AbstractFlashcardViewer.kt" in overlay
     assert "suspend fun isCurrent(" in source
+
+
+def test_companion_widget_never_contends_with_active_reviewer_collection():
+    integration=(ROOT/'ankidroid_bridge'/'CompanionIntegration.kt').read_text()
+    sync=(ROOT/'android'/'app'/'src'/'main'/'java'/'org'/'ankicompanion'/'app'/'Sync.kt').read_text()
+    assert 'putBoolean("reviewer_active", visibleReviewers.get() > 0)' in integration
+    assert 'getBoolean("reviewer_active",false)==true' in sync
+    # Stop before revlog / decks / native sync: the separate app may never
+    # acquire the Anki collection lock while card buttons are active.
+    assert sync.index('if(reviewing) {') < sync.index('AnkiBridge.refreshNative(context)')
+    assert sync.index('return store.load("state.json")?.let { cached ->') < sync.index('outbox.scan(')
+    assert 'AnkiBridge.synchronize(context)' in sync
+    assert 'if (requested.get()) requestSync()' in integration
