@@ -173,3 +173,49 @@ def test_gui_setup_repair_is_repeatable_and_never_requires_shell_commands():
     bridge=(Path(__file__).resolve().parents[1]/'desktop/bootstrap.py').read_text()
     assert 'if all((target/n).is_file() and (target/n).read_bytes()==b' in bridge
     assert 'stage.replace(dest)' in bridge
+
+
+def test_healthy_new_server_never_triggers_legacy_port_cleanup(tmp_path, monkeypatch):
+    """8765 is not a dependency when the real 8766 server is already healthy."""
+    tmp_path.joinpath("token.txt").write_text("existing-token-1234567890")
+    monkeypatch.setattr(setup, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(setup, "_healthy", lambda *args, **kwargs: True)
+    def fail(*args, **kwargs):
+        raise AssertionError("No legacy cleanup or server restart on healthy 8766")
+    monkeypatch.setattr(setup, "retire_legacy_windows_server", fail)
+    monkeypatch.setattr(setup, "hidden_process", fail)
+    class Client:
+        def __init__(self, url, token):
+            assert url.endswith(":8766")
+            assert token == "existing-token-1234567890"
+        def request(self, path):
+            assert path == "/v1/state"
+    monkeypatch.setattr(setup, "Client", Client)
+    assert setup.ensure_server() == "existing-token-1234567890"
+
+
+def test_stuck_legacy_8765_server_cannot_block_in_app_repair(tmp_path, monkeypatch):
+    """Old server may be respawned on 8765, but we can start 8766 without shell."""
+    tmp_path.joinpath("token.txt").write_text("existing-token-1234567890")
+    app = tmp_path / "AnkiCompanionServer.exe"
+    app.write_bytes(b"simulated-executable")
+    monkeypatch.setattr(setup, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(setup, "server_executable", lambda: app)
+    state = {"started": False}
+    monkeypatch.setattr(setup, "_healthy", lambda *args, **kwargs: state["started"])
+    def stuck_legacy():
+        raise RuntimeError("Legacy Companion server has not released port 8765")
+    monkeypatch.setattr(setup, "retire_legacy_windows_server", stuck_legacy)
+    def start_server(args, **kwargs):
+        assert args == [str(app)]
+        state["started"] = True
+    monkeypatch.setattr(setup, "hidden_process", start_server)
+    class Client:
+        def __init__(self, url, token):
+            assert url.endswith(":8766")
+            assert token == "existing-token-1234567890"
+        def request(self, path):
+            assert path == "/v1/state"
+    monkeypatch.setattr(setup, "Client", Client)
+    assert setup.ensure_server() == "existing-token-1234567890"
+    assert state["started"]
