@@ -2,6 +2,8 @@
 // AnkiCompanion extension for AnkiDroid 2.25.3. No collection SQL writes.
 package com.ichi2.anki
 
+import android.app.Activity
+import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.database.MatrixCursor
@@ -10,7 +12,6 @@ import android.os.Bundle
 import anki.sync.SyncCollectionResponse
 import anki.collection.opChanges
 import com.ichi2.anki.observability.ChangeManager
-import com.ichi2.anki.common.preferences.sharedPrefs
 import com.ichi2.anki.CollectionManager.withCol
 import com.ichi2.anki.settings.Prefs
 import kotlinx.coroutines.CoroutineScope
@@ -22,15 +23,50 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 object CompanionIntegration {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
     private val queued = AtomicBoolean(false)
     private val requested = AtomicBoolean(false)
+    private val reviewEventQueued = AtomicBoolean(false)
+    private val reviewEventPending = AtomicBoolean(false)
     @Volatile private var app: Context? = null
+    private val registered = AtomicBoolean(false)
+    private val visibleReviewers = AtomicInteger(0)
     private fun prefs() = app!!.getSharedPreferences("companion_bridge", Context.MODE_PRIVATE)
-    fun initialize(context: Context) { app = context.applicationContext }
+
+    private fun isReviewer(activity: Activity): Boolean =
+        activity is Reviewer ||
+            activity.javaClass.name == "com.ichi2.anki.previewer.CardViewerActivity"
+
+    fun initialize(context: Context) {
+        app = context.applicationContext
+        // Never run a native network sync while a reviewer is visible.
+        // Even IO-dispatcher sync can monopolize the Anki collection lock.
+        if (registered.compareAndSet(false, true)) {
+            (context.applicationContext as Application).registerActivityLifecycleCallbacks(
+                object : Application.ActivityLifecycleCallbacks {
+                    override fun onActivityCreated(activity: Activity, state: Bundle?) {}
+                    override fun onActivityStarted(activity: Activity) {
+                        if (isReviewer(activity)) visibleReviewers.incrementAndGet()
+                    }
+                    override fun onActivityResumed(activity: Activity) {}
+                    override fun onActivityPaused(activity: Activity) {}
+                    override fun onActivityStopped(activity: Activity) {
+                        if (!isReviewer(activity)) return
+                        if (visibleReviewers.decrementAndGet() <= 0) {
+                            visibleReviewers.set(0)
+                            if (requested.get()) requestSync()
+                        }
+                    }
+                    override fun onActivitySaveInstanceState(activity: Activity, state: Bundle) {}
+                    override fun onActivityDestroyed(activity: Activity) {}
+                }
+            )
+        }
+    }
     private fun enabled() = app != null && prefs().getBoolean("enabled", false)
 
     fun status(): Bundle = Bundle().apply {
@@ -38,6 +74,8 @@ object CompanionIntegration {
         putBoolean("history", true)
         putBoolean("native_sync", true)
         putBoolean("enabled", enabled())
+        // Lightweight IPC status: no Anki collection query or mutex required.
+        putBoolean("reviewer_active", visibleReviewers.get() > 0)
         putString("sync_status", if (app == null) "not initialized" else prefs().getString("sync_status", "not yet synced"))
         putLong("synced_ms", if (app == null) 0 else prefs().getLong("synced_ms", 0))
         putLong("generation", if (app == null) 0 else prefs().getLong("generation", 0))
@@ -46,8 +84,6 @@ object CompanionIntegration {
     fun configure(context: Context, options: Bundle): Bundle {
         initialize(context)
         val wasEnabled = enabled()
-        // All automatic review hooks are in the supported new reviewer.
-        context.sharedPrefs().edit().putBoolean("newReviewer", true).putBoolean("newReviewerOptions", true).apply()
         prefs().edit().putBoolean("enabled", options.getBoolean("enabled", true))
             .putString("parent_deck_id", options.getString("parent_deck_id", ""))
             .putString("clearance", options.getString("clearance", "new_and_reviews")).apply()
@@ -64,17 +100,48 @@ object CompanionIntegration {
             .setClassName("org.ankicompanion.app", "org.ankicompanion.app.ReviewChangedReceiver"))
     }
 
+    /**
+     * A review/undo callback must not perform Android IPC, SharedPreferences IO,
+     * or network orchestration before the next question is displayed.
+     * One background wake is sufficient: the companion queries the durable
+     * native review history rather than relying on individual broadcast data.
+     */
+    fun reviewChanged() {
+        reviewEventPending.set(true)
+        if (!reviewEventQueued.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                do {
+                    reviewEventPending.set(false)
+                    changed()
+                    requestSync()
+                } while (reviewEventPending.get())
+            } finally {
+                reviewEventQueued.set(false)
+                // Don't lose a review that committed while the wake job
+                // was finishing. The eventual revlog scan is idempotent.
+                if (reviewEventPending.get()) reviewChanged()
+            }
+        }
+    }
+
     fun requestSync(): Bundle {
         if (!enabled()) return status()
         // A committed answer wakes asynchronous collection synchronization;
         // the reviewer never awaits this IO. Reviews arriving during an
         // existing pass schedule a subsequent pass, not a dropped request.
         requested.set(true)
+        if (visibleReviewers.get() > 0) {
+            // Progress events still propagate via changed(); the native
+            // scheduling sync resumes as soon as review is left.
+            return status()
+        }
         if (queued.compareAndSet(false,true)) {
             scope.launch {
                 try {
                     do {
-                        delay(700) // group closely-spaced answers (<5s target)
+                        delay(700) // coalesce transitions without polling
+                        if (visibleReviewers.get() > 0) break
                         requested.set(false)
                         synchronize()
                     } while (requested.get())
@@ -131,26 +198,24 @@ object CompanionIntegration {
         }
     }
 
-    suspend fun beforeReview() {
-        if (!enabled()) return
-        changed()
-        // Remote native sync happens in the background; do not block rendering.
-        withCol {
-            val parentId = prefs().getString("parent_deck_id", "")?.toLongOrNull() ?: return@withCol
-            val tree = sched.deckDueTree()
-            val nodes = tree.toList()
-            val parent = nodes.firstOrNull { it.did == parentId } ?: return@withCol
-            val current = nodes.firstOrNull { it.did == decks.selected() } ?: return@withCol
-            if (current.did != parent.did && !current.fullDeckName.startsWith(parent.fullDeckName + "::")) return@withCol
+    /** Called ONLY after Anki reports an empty queue, never before each card. */
+    suspend fun advanceWhenEmpty(): Boolean {
+        if (!enabled()) return false
+        return withCol {
+            val parentId = prefs().getString("parent_deck_id", "")?.toLongOrNull() ?: return@withCol false
+            val clearance = prefs().getString("clearance", "")
+            val nodes = sched.deckDueTree().toList()
+            val parent = nodes.firstOrNull { it.did == parentId } ?: return@withCol false
+            val current = nodes.firstOrNull { it.did == decks.selected() } ?: return@withCol false
+            if (current.did != parent.did && !current.fullDeckName.startsWith(parent.fullDeckName + "::")) return@withCol false
             fun eligible(node: com.ichi2.anki.libanki.sched.DeckNode) =
-                node.newCount > 0 || (prefs().getString("clearance", "") != "new_only" && node.revCount + node.lrnCount > 0)
-            if (!eligible(current)) {
-                // Anki's tree is already ordered by deck name. Numeric-aware
-                // comparison matches the companion's subdeck ordering.
-                fun natural(name: String) = Regex("[0-9]+").replace(name.lowercase()) { it.value.padStart(20, '0') }
-                val next = parent.children.sortedBy { natural(it.fullDeckName) }.firstOrNull { eligible(it) }
-                if (next != null) decks.select(next.did)
-            }
+                node.newCount > 0 || (clearance != "new_only" && node.revCount + node.lrnCount > 0)
+            fun natural(name: String) = Regex("[0-9]+").replace(name.lowercase()) { it.value.padStart(20, '0') }
+            val next = parent.children.sortedBy { natural(it.fullDeckName) }.firstOrNull { eligible(it) }
+            if (next != null) {
+                decks.select(next.did)
+                true
+            } else false
         }
     }
 
