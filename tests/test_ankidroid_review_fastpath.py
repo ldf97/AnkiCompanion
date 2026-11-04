@@ -1,30 +1,39 @@
-"""Regression for hot-path AnkiDroid review responsiveness.
+"""Prove the companion layer cannot add per-card synchronous deck scans.
 
-Compilation and real native cross-device tests still gate the review hooks in CI.
-This source contract prevents reintroducing full-deck scans per card.
+The pinned AnkiDroid Android build and native cross-device tests validate the
+overlay against actual AnkiDroid source.
 """
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_deck_tree_traversal_is_not_on_normal_reviewer_transition():
-    source=(ROOT/'ankidroid_bridge'/'CompanionIntegration.kt').read_text(encoding='utf-8')
-    before=source.split('    suspend fun beforeReview() {',1)[1].split('\n    fun history(',1)[0]
-    assert 'val counts = sched.counts()' in before
-    assert 'if (hasEligibleCards) return@withCol' in before
-    assert before.index('if (hasEligibleCards) return@withCol') < before.index('sched.deckDueTree()')
-    assert 'changed()' not in before
-    # The device still switches decks when its selected deck is exhausted.
-    assert 'decks.select(next.did)' in before
-    assert 'clearance != "new_only"' in before
+def test_deck_tree_scanned_only_when_queue_exhausted():
+    source = (ROOT / "ankidroid_bridge" / "CompanionIntegration.kt").read_text()
+    overlay = (ROOT / "ankidroid_bridge" / "apply.py").read_text()
+    assert "suspend fun advanceWhenEmpty(): Boolean" in source
+    assert "sched.deckDueTree()" in source
+    assert "CompanionIntegration.beforeReview()" not in overlay
+    assert "state == null && com.ichi2.anki.CompanionIntegration.advanceWhenEmpty()" in overlay
+    assert "state == null && CompanionIntegration.advanceWhenEmpty()" in overlay
+    assert "decks.select(next.did)" in source
 
 
-def test_native_sync_and_stale_card_guard_remain_enabled():
-    integration=(ROOT/'ankidroid_bridge'/'CompanionIntegration.kt').read_text(encoding='utf-8')
-    overlay=(ROOT/'ankidroid_bridge'/'apply.py').read_text(encoding='utf-8')
-    assert 'fun requestSync()' in integration
-    assert 'suspend fun isCurrent(' in integration
-    assert 'CompanionIntegration.beforeReview()' in overlay
-    assert 'CompanionIntegration.isCurrent(card)' in overlay
-    assert 'CompanionIntegration.requestSync()' in overlay
+def test_active_review_protects_card_press_from_native_network_sync():
+    source = (ROOT / "ankidroid_bridge" / "CompanionIntegration.kt").read_text()
+    assert "registerActivityLifecycleCallbacks(" in source
+    assert "visibleReviewers.get() > 0" in source
+    assert "if (requested.get()) requestSync()" in source
+    assert "if (visibleReviewers.get() > 0) break" in source
+
+
+def test_both_reviewer_styles_have_review_and_undo_hooks():
+    source = (ROOT / "ankidroid_bridge" / "CompanionIntegration.kt").read_text()
+    overlay = (ROOT / "ankidroid_bridge" / "apply.py").read_text()
+    assert 'putBoolean("newReviewer"' not in source
+    assert "legacy=base+'Reviewer.kt'" in overlay
+    assert "CompanionIntegration.isCurrent(card)" in overlay
+    assert "CompanionIntegration.changed()" in overlay
+    assert "CompanionIntegration.requestSync()" in overlay
+    assert "AbstractFlashcardViewer.kt" in overlay
+    assert "suspend fun isCurrent(" in source
