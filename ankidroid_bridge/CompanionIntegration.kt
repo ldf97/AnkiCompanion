@@ -30,6 +30,7 @@ object CompanionIntegration {
     private val mutex = Mutex()
     private val queued = AtomicBoolean(false)
     private val requested = AtomicBoolean(false)
+    private val reviewEventQueued = AtomicBoolean(false)
     @Volatile private var app: Context? = null
     private val registered = AtomicBoolean(false)
     private val visibleReviewers = AtomicInteger(0)
@@ -94,6 +95,24 @@ object CompanionIntegration {
         // it reads the permission-protected provider and its authenticated server.
         context.sendBroadcast(Intent("org.ankicompanion.app.REVIEWS_CHANGED")
             .setClassName("org.ankicompanion.app", "org.ankicompanion.app.ReviewChangedReceiver"))
+    }
+
+    /**
+     * A review/undo callback must not perform Android IPC, SharedPreferences IO,
+     * or network orchestration before the next question is displayed.
+     * One background wake is sufficient: the companion queries the durable
+     * native review history rather than relying on individual broadcast data.
+     */
+    fun reviewChanged() {
+        if (!reviewEventQueued.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                changed()
+                requestSync()
+            } finally {
+                reviewEventQueued.set(false)
+            }
+        }
     }
 
     fun requestSync(): Bundle {
