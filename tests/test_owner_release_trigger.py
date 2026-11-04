@@ -1,35 +1,34 @@
-"""Only the owner can cause the release workflow to consume signing secrets.
+"""Owner-controlled release trigger is limited to a GitHub issue comment.
 
-GitHub issue comments are used solely as a transport for two hard-coded
-commands: no untrusted comment is interpolated into any executable shell.
+Untrusted text is passed in environment variables and restricted to an exact
+numeric release command. It is never interpolated directly into shell script.
 """
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_owner_only_release_request_is_scoped_to_control_issue():
-    workflow = (ROOT / ".github/workflows/owner-release-trigger.yml").read_text()
-    assert "issue_comment:" in workflow
-    assert "types: [created]" in workflow
-    assert "github.repository == 'ldf97/AnkiCompanion'" in workflow
-    assert "github.event.issue.number == 23" in workflow
-    assert "!github.event.issue.pull_request" in workflow
-    assert "github.event.comment.user.login == github.repository_owner" in workflow
-    assert "github.event.comment.body == '/prepare-release v0.1.2 build=3'" in workflow
-    assert "github.event.comment.body == '/publish-release v0.1.2 build=3'" in workflow
-    assert "secrets: inherit" in workflow
+def test_release_request_is_restricted_to_owner_and_control_issue():
+    w = (ROOT / ".github/workflows/owner-release-trigger.yml").read_text()
+    assert "issue_comment:" in w and "types: [created]" in w
+    assert "github.repository == 'ldf97/AnkiCompanion'" in w
+    assert "github.event.issue.number == 23" in w
+    assert "!github.event.issue.pull_request" in w
+    assert "github.event.comment.user.login == github.repository_owner" in w
+    assert "startsWith(github.event.comment.body, '/prepare-release ')" in w
+    assert "startsWith(github.event.comment.body, '/publish-release ')" in w
 
 
-def test_no_credentials_exposed_and_publishing_requires_second_command():
-    workflow = (ROOT / ".github/workflows/owner-release-trigger.yml").read_text()
-    assert "environment: signing" in workflow
-    assert "secrets.ANDROID_SIGNING_BUNDLE" in workflow
-    assert "secrets.ANDROID_KEYSTORE_BASE64" in workflow
-    assert "Missing persistent Android signing key" in workflow
-    assert "publish: false" in workflow
-    assert "publish: true" in workflow
-    assert "uses: ./.github/workflows/release-candidate.yml" in workflow
-    assert "gh release create" not in workflow
-    assert "eval(" not in workflow
-    assert "github.event.comment.body }}" not in workflow
+def test_commands_are_validated_not_interpreted_and_dispatch_is_explicit():
+    w = (ROOT / ".github/workflows/owner-release-trigger.yml").read_text()
+    assert "actions: write" in w
+    assert "GH_TOKEN: ${{ github.token }}" in w
+    assert "RELEASE_REQUEST: ${{ github.event.comment.body }}" in w
+    assert "re.fullmatch(" in w
+    assert "build=(\\d+)" in w
+    assert "gh workflow run release-candidate.yml --ref main" in w
+    assert '--raw-field "publish=$PUBLISH"' in w
+    assert "secrets.ANDROID" not in w
+    assert "gh release create" not in w
+    assert "eval(" not in w
+    assert "github.event.comment.body }}" not in w.split("run: |",1)[1]
