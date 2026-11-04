@@ -8,7 +8,7 @@ No private Anki profile, Android app or production token is accessed.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import argparse
 import json
@@ -282,9 +282,14 @@ def run_scenario(root: Path):
     with GymLab(root) as lab:
         pc1,phone,pc2=(lab.devices[x] for x in ('pc1','phone','pc2'))
         settings=pc1.request('GET','/v1/settings')
-        settings.update(lesson_answers=10,lesson_ms=0,timezone='UTC',rollover_minute=0)
+        # Keep the synthetic reviews safely in the past even when CI runs
+        # before UTC noon. Anchor the local study-day rollover one hour before
+        # the test starts to avoid midnight boundary flakes as well.
+        start=datetime.now(timezone.utc)
+        rollover=(start.hour*60+start.minute-60)%(24*60)
+        settings.update(lesson_answers=10,lesson_ms=0,timezone='UTC',rollover_minute=rollover)
         assert pc1.request('PUT','/v1/settings',json=settings)['lesson_answers']==10
-        day=int(datetime.now(timezone.utc).replace(hour=12,minute=0,second=0,microsecond=0).timestamp()*1000)
+        day=int((start-timedelta(minutes=10)).timestamp()*1000)
         # PC1 answers and publishes, then phone explicitly syncs before study.
         for i in range(1,21):pc1.answer(i,i,day)
         assert pc1.handoff()=='verified'
