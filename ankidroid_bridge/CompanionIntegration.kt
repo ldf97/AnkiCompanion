@@ -133,20 +133,30 @@ object CompanionIntegration {
 
     suspend fun beforeReview() {
         if (!enabled()) return
-        changed()
-        // Remote native sync happens in the background; do not block rendering.
+        // A REVIEW ANSWER already sends a single REVIEWS_CHANGED broadcast.
+        // Broadcasting again before every question needlessly schedules Android
+        // companion work on the card-display path.
+        //
+        // Deck switching is only needed when the selected deck is exhausted.
+        // Most card transitions must not build and traverse the whole deck tree.
+        // The lightweight selected-deck counters preserve the original
+        // new-only versus new-and-reviews clearance behavior.
         withCol {
             val parentId = prefs().getString("parent_deck_id", "")?.toLongOrNull() ?: return@withCol
+            val clearance = prefs().getString("clearance", "")
+            val counts = sched.counts()
+            val hasEligibleCards =
+                counts.new > 0 || (clearance != "new_only" && counts.count() > 0)
+            if (hasEligibleCards) return@withCol
             val tree = sched.deckDueTree()
             val nodes = tree.toList()
             val parent = nodes.firstOrNull { it.did == parentId } ?: return@withCol
             val current = nodes.firstOrNull { it.did == decks.selected() } ?: return@withCol
             if (current.did != parent.did && !current.fullDeckName.startsWith(parent.fullDeckName + "::")) return@withCol
             fun eligible(node: com.ichi2.anki.libanki.sched.DeckNode) =
-                node.newCount > 0 || (prefs().getString("clearance", "") != "new_only" && node.revCount + node.lrnCount > 0)
+                node.newCount > 0 || (clearance != "new_only" && node.revCount + node.lrnCount > 0)
             if (!eligible(current)) {
-                // Anki's tree is already ordered by deck name. Numeric-aware
-                // comparison matches the companion's subdeck ordering.
+                // Numeric-aware subdeck ordering is unchanged.
                 fun natural(name: String) = Regex("[0-9]+").replace(name.lowercase()) { it.value.padStart(20, '0') }
                 val next = parent.children.sortedBy { natural(it.fullDeckName) }.firstOrNull { eligible(it) }
                 if (next != null) decks.select(next.did)
