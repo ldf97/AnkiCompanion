@@ -33,7 +33,12 @@ def test_both_reviewer_styles_have_review_and_undo_hooks():
     assert 'putBoolean("newReviewer"' not in source
     assert "legacy=base+'Reviewer.kt'" in overlay
     assert "CompanionIntegration.isCurrent(card)" in overlay
-    assert "CompanionIntegration.changed()" in overlay
+    # All reviewer answer/undo hooks must return immediately, with wake IPC
+    # and native sync orchestration queued on the IO dispatcher.
+    assert overlay.count("CompanionIntegration.reviewChanged()") == 6
+    assert "fun reviewChanged()" in source
+    assert "scope.launch {" in source
+    assert "reviewEventQueued.compareAndSet(false, true)" in source
     assert "CompanionIntegration.requestSync()" in overlay
     assert "AbstractFlashcardViewer.kt" in overlay
     assert "suspend fun isCurrent(" in source
