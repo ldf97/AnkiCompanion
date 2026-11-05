@@ -182,7 +182,7 @@ def test_windows_direct_github_download_never_uses_companion_server(tmp_path, mo
     monkeypatch.setattr(updates.urllib.request,'build_opener',lambda:GithubOpener())
     assert updates.download(release,tmp_path).read_bytes()==payload
     assert not list(tmp_path.glob('*.partial'))
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError,match='Untrusted update URL'):
         updates.download({**release,'download_url':None},tmp_path)
     with pytest.raises(ValueError,match='Untrusted update URL'):
         updates.download({**release,'download_url':'https://example.com/malware.exe'},tmp_path)
