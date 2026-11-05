@@ -102,7 +102,8 @@ def test_android_updates_use_public_github_without_pairing_and_keep_feedback_vis
     main=(ROOT/'android/app/src/main/java/org/ankicompanion/app/MainActivity.kt').read_text()
     sync=(ROOT/'android/app/src/main/java/org/ankicompanion/app/Sync.kt').read_text()
     assert 'fun check(context:Context,force:Boolean=false)' in updates
-    assert 'fun download(context:Context,release:JSONObject)' in updates
+    assert 'fun download(' in updates and 'onProgress:(Int)->Unit' in updates
+    assert 'OkHttpClient.Builder()' in updates
     assert 'Legacy update needs a paired server' not in updates
     assert 'https://github.com/ldf97/AnkiCompanion/releases/latest/download/' in updates
     assert 'Updates.check(context)' in sync
