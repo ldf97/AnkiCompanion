@@ -17,7 +17,7 @@ if (process.env.ANKI_COMPANION_CI_UPGRADE === "1") {
 '@
 $needle='const single = app.requestSingleInstanceLock();'
 if (-not $originalElectron.Contains($needle)) { throw 'Missing Electron CI fixture anchor' }
-Set-Content 'updater/main.js' ($originalElectron.Replace($needle,$injection+"\n"+$needle)) -Encoding utf8
+Set-Content 'updater/main.js' ($originalElectron.Replace($needle,$injection+"`n"+$needle)) -Encoding utf8
 ./scripts/build_windows.ps1
 if ($LASTEXITCODE -ne 0) { throw 'Vortex-compatible Electron build failed' }
 $installer=Resolve-Path 'packages/AnkiCompanion-Windows-Setup.exe'
