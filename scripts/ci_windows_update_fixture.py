@@ -36,8 +36,11 @@ def enable_baseline():
 """
     original=replace(original,"    def repair_setup(self):",trigger+"    def repair_setup(self):")
     original=replace(original,
-        """if QMessageBox.question(self,'Update to '+release['version'],text+'\\n\\nDownload and update?')==QMessageBox.StandardButton.Yes:""",
-        """if (QMessageBox.StandardButton.Yes if os.environ.get('ANKI_COMPANION_CI_UPGRADE')=='1' else QMessageBox.question(self,'Update to '+release['version'],text+'\\n\\nDownload and update?'))==QMessageBox.StandardButton.Yes:""")
+        """if QMessageBox.question(self,'Update to '+release['version'],
+                    message+'\n\nDownload and update?')!=QMessageBox.StandardButton.Yes:""",
+        """if (QMessageBox.StandardButton.Yes if os.environ.get('ANKI_COMPANION_CI_UPGRADE')=='1'
+                    else QMessageBox.question(self,'Update to '+release['version'],
+                    message+'\n\nDownload and update?'))!=QMessageBox.StandardButton.Yes:""")
     APP.write_text(original,encoding='utf-8')
 
     source=UPDATES.read_text(encoding='utf-8')
