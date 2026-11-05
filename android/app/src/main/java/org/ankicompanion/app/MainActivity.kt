@@ -314,7 +314,9 @@ class MainActivity:Activity() {
                 .setMessage("Use the production-signed ${release.optString("version")} package. Review data stays in AnkiDroid and native AnkiWeb sync.")
                 .setNegativeButton("Later",null).setPositiveButton("Continue"){_,_->
                     updateStatus.text="Downloading and verifying AnkiDroid Companion…"
-                    async({Updates.download(applicationContext,release)},updateExecutor,
+                    async({Updates.download(applicationContext,release){ percent ->
+                        runOnUiThread{if(!isFinishing)updateStatus.text="Downloading AnkiDroid Companion: $percent%"}
+                    }},updateExecutor,
                         onError={e->updateStatus.text="Update download failed: "+(e.message ?: "Network error")}){file->installDownloaded(file as File)}
                 }.show()
         }
@@ -340,7 +342,9 @@ class MainActivity:Activity() {
             if(!release.optBoolean("available")){updateStatus.text=release.optString("message","No newer release");return@async}
             AlertDialog.Builder(this).setTitle("Update to "+release.getString("version")).setMessage(release.optString("notes")+"\nSource commit: "+release.optString("commit")).setNegativeButton("Later",null).setPositiveButton("Update"){_,_->
                 updateStatus.text="Downloading and verifying Android Companion…"
-                async({Updates.download(applicationContext,release)},updateExecutor,
+                async({Updates.download(applicationContext,release){ percent ->
+                        runOnUiThread{if(!isFinishing)updateStatus.text="Downloading Android Companion: $percent%"}
+                    }},updateExecutor,
                     onError={e->updateStatus.text="Update download failed: "+(e.message ?: "Network error")}){file->installDownloaded(file as File)}
             }.show()
         }
