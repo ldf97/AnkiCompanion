@@ -337,7 +337,7 @@ class MainActivity:Activity() {
         async({Updates.check(applicationContext,true)},updateExecutor,
             onError={e->updateStatus.text="Update check failed: "+(e.message ?: "Network error")}){result->
             val release=result as? JSONObject ?: return@async
-            if(!release.optBoolean("available")){status.text=release.optString("message","No newer release");return@async}
+            if(!release.optBoolean("available")){updateStatus.text=release.optString("message","No newer release");return@async}
             AlertDialog.Builder(this).setTitle("Update to "+release.getString("version")).setMessage(release.optString("notes")+"\nSource commit: "+release.optString("commit")).setNegativeButton("Later",null).setPositiveButton("Update"){_,_->
                 updateStatus.text="Downloading and verifying Android Companion…"
                 async({Updates.download(applicationContext,release)},updateExecutor,
