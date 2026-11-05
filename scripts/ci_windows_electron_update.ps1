@@ -2,6 +2,22 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 $env:ANKI_COMPANION_ELECTRON_BUILD='1'
+# TEST ONLY: Modify the disposable runner workspace, never committed Electron
+# runtime, to point the baseline at a local release feed and click its actual
+# updater API automatically. The target installer is built from restored source.
+$originalElectron=Get-Content 'updater/main.js' -Raw
+$injection=@'
+if (process.env.ANKI_COMPANION_CI_UPGRADE === "1") {
+  app.whenReady().then(() => {
+    autoUpdater.setFeedURL({provider:"generic",url:"http://127.0.0.1:8767/"});
+    autoUpdater.on("update-available", () => setImmediate(() => downloadUpdate()));
+    autoUpdater.on("update-downloaded", () => setImmediate(() => installUpdate()));
+  });
+}
+'@
+$needle='const single = app.requestSingleInstanceLock();'
+if (-not $originalElectron.Contains($needle)) { throw 'Missing Electron CI fixture anchor' }
+Set-Content 'updater/main.js' ($originalElectron.Replace($needle,$injection+"\n"+$needle)) -Encoding utf8
 ./scripts/build_windows.ps1
 if ($LASTEXITCODE -ne 0) { throw 'Vortex-compatible Electron build failed' }
 $installer=Resolve-Path 'packages/AnkiCompanion-Windows-Setup.exe'
@@ -57,3 +73,59 @@ New-Item -ItemType Directory -Force 'test-results/update-buttons/windows' | Out-
    update_shell_started=$true } |
     ConvertTo-Json -Depth 4 | Set-Content 'test-results/update-buttons/windows/electron-evidence.json' -Encoding utf8
 Write-Host 'PASS: Installed Electron/NSIS updater and bundled Python components'
+
+# TEST ONLY: create a genuine newer installer, metadata and local GitHub-like
+# release feed. Do not put a mock provider or test auto-click in production.
+Set-Content 'updater/main.js' $originalElectron -Encoding utf8
+$version=Get-Content 'VERSION.json' -Raw | ConvertFrom-Json
+if ($version.version -ne '0.1.1') { throw 'Two-version test expects baseline 0.1.1' }
+$version.version='0.1.2'
+$version.build=3
+$version.commit='ci-installed-nsis-upgrade'
+$version | ConvertTo-Json -Depth 8 | Set-Content 'VERSION.json' -Encoding utf8
+$qtOriginal=Get-Content 'desktop/app.py' -Raw
+$before="self.update_status=QLabel('Updates handled by Windows updater')"
+if (-not $qtOriginal.Contains($before)) { throw 'Missing Qt source patch anchor' }
+Set-Content 'desktop/app.py' ($qtOriginal.Replace($before,
+  "self.update_status=QLabel('PATCH CONFIRMED · Windows updater')")) -Encoding utf8
+./scripts/build_windows.ps1
+if ($LASTEXITCODE -ne 0) { throw 'Could not build real target version 0.1.2' }
+if (-not (Test-Path 'packages/latest.yml')) { throw 'Target feed metadata missing' }
+$serverlog=Join-Path (Get-Location) 'test-results/update-buttons/windows/http-server.log'
+$feed=Start-Process python -ArgumentList '-m','http.server','8767','--bind','127.0.0.1',
+  '--directory',(Resolve-Path 'packages').Path -PassThru -RedirectStandardOutput $serverlog
+try {
+  $ready=$false
+  for($i=0;$i -lt 30;$i++){
+    try{
+      $meta=Invoke-WebRequest -Uri 'http://127.0.0.1:8767/latest.yml' -UseBasicParsing -TimeoutSec 3
+      if($meta.StatusCode -eq 200){$ready=$true;break}
+    }catch{}
+    Start-Sleep -Seconds 1
+  }
+  if(-not $ready){throw 'Local GitHub-like NSIS test feed did not start'}
+  $env:ANKI_COMPANION_CI_UPGRADE='1'
+  $upgrade=Start-Process $launcher -ArgumentList '--updates' -PassThru
+  $newVersion=$false
+  $registry='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+  for($i=0;$i -lt 180;$i++) {
+    foreach($entry in @(Get-ChildItem $registry -ErrorAction SilentlyContinue)) {
+      $v=Get-ItemProperty $entry.PSPath -ErrorAction SilentlyContinue
+      if($v.DisplayName -eq 'AnkiCompanion' -and $v.DisplayVersion -eq '0.1.2'){
+        $newVersion=$true
+        break
+      }
+    }
+    if($newVersion){break}
+    Start-Sleep -Seconds 1
+  }
+  if(-not $newVersion){throw 'Electron updater did not apply NSIS v0.1.2 over v0.1.1'}
+  Write-Host 'PASS: Electron updater downloaded latest.yml and installed real NSIS v0.1.2 over v0.1.1'
+  @{v1='0.1.1';v2='0.1.2';actual_nsis_in_place_upgrade=$true;
+    via_electron_updater=$true;no_reinstall=$true} |
+    ConvertTo-Json | Set-Content 'test-results/update-buttons/windows/in-place-update.json' -Encoding utf8
+} finally {
+  Remove-Item Env:ANKI_COMPANION_CI_UPGRADE -ErrorAction SilentlyContinue
+  Stop-Process -Id $feed.Id -ErrorAction SilentlyContinue
+}
+
