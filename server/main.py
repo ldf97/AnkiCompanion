@@ -70,6 +70,17 @@ def create_app(data_dir=None, token=None, clock=None, fcm_send=None):
     @api.get('/health')
     def health(): return {'status':'ok'}
 
+    @api.post('/v1/local-updater/shutdown', dependencies=[Depends(auth)])
+    def shutdown_for_installer(request: Request):
+        """Stop only the authenticated local server before replacing its EXE."""
+        if request.client is None or request.client.host not in ('127.0.0.1','::1'):
+            raise HTTPException(403,'Local updater only')
+        def stop():
+            time.sleep(0.5)
+            os._exit(0)
+        threading.Thread(target=stop,daemon=True).start()
+        return {'stopping':True}
+
     @api.get('/v1/push/status', dependencies=[Depends(auth)])
     def push_status(): return push.status()
 

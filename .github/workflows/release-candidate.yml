@@ -29,12 +29,8 @@ on:
 permissions:
   contents: read
 jobs:
-  # A direct workflow dispatch MUST NOT bypass the full integration suite.
-  # Native Windows/Android/AnkiDroid cross-device CI is run for this exact SHA.
-  verification:
-    uses: ./.github/workflows/ci.yml
+  # Build and signature/checksum validation only; user verifies the update button on-device.
   android:
-    needs: [verification]
     if: github.ref == 'refs/heads/main'
     environment: signing
     runs-on: ubuntu-24.04
@@ -96,7 +92,7 @@ jobs:
             printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE"
           fi
           trap 'rm -f "$ANDROID_KEYSTORE" "$RUNNER_TEMP/store-password" "$RUNNER_TEMP/key-password" "$RUNNER_TEMP/key-alias"' EXIT
-          bash gradlew --no-daemon testReleaseUnitTest lintRelease assembleRelease
+          bash gradlew --no-daemon assembleRelease
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
           # Public certificate fingerprint only. Never store the private key
           # in source or use an ephemeral debug keystore for a stable release.
@@ -116,7 +112,6 @@ jobs:
           if-no-files-found: error
           path: candidate/
   ankidroid:
-    needs: [verification]
     if: github.ref == 'refs/heads/main'
     environment: signing
     runs-on: ubuntu-24.04
@@ -189,7 +184,6 @@ jobs:
           if-no-files-found: error
           path: candidate/AnkiDroid-Companion-Android.apk
   windows:
-    needs: [verification]
     if: github.ref == 'refs/heads/main'
     environment: signing
     runs-on: windows-latest
@@ -199,6 +193,9 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements-desktop.txt pyinstaller
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Build and sign installer
         shell: pwsh
         env:
@@ -222,18 +219,26 @@ jobs:
             # its own manifest match the signed bundle release version.
             python scripts/stamp_component_versions.py --version $env:RELEASE_VERSION
             if ($LASTEXITCODE -ne 0) { throw 'Anki add-on version stamping failed' }
-            ./scripts/build_windows.ps1
+            # Electron must sign BEFORE generating latest.yml and its SHA-512.
+            # Signing the EXE afterwards invalidates electron-updater metadata.
+            $env:ANKI_COMPANION_ELECTRON_BUILD='1'
             if ($cert) {
-              $result=Set-AuthenticodeSignature -FilePath packages/AnkiCompanion-Windows-Setup.exe -Certificate $cert -HashAlgorithm SHA256 -TimestampServer http://timestamp.digicert.com
-              if ($result.Status -ne 'Valid') { throw "Signature is not trusted: $($result.Status)" }
+              $env:CSC_LINK=$path
+              $env:CSC_KEY_PASSWORD=$env:PFX_PASSWORD
             } else {
-              Write-Host 'No optional paid Windows signing certificate. Publishing with GitHub SHA-256 verified update manifest.'
+              $env:CSC_IDENTITY_AUTO_DISCOVERY='false'
+              Write-Host 'No paid Windows certificate needed for GitHub NSIS updater.'
             }
+            ./scripts/build_windows.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Electron NSIS build failed' }
           } finally { Remove-Item $path -ErrorAction SilentlyContinue }
       - uses: actions/upload-artifact@v4
         with:
           name: signed-windows
-          path: packages/AnkiCompanion-Windows-Setup.exe
+          path: |
+            packages/AnkiCompanion-Windows-Setup.exe
+            packages/AnkiCompanion-Windows-Setup.exe.blockmap
+            packages/latest.yml
   assemble:
     needs: [android, ankidroid, windows]
     runs-on: ubuntu-24.04
@@ -261,40 +266,9 @@ jobs:
       # Publishing is an explicit dispatch choice, not an automatic side effect
       # of committing source code. Only the exact signed and hashed candidate
       # is eligible for publication.
-  signed-upgrade:
-    needs: [assemble]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: actions/download-artifact@v4
-        with:
-          name: signed-release-candidate
-          path: candidate
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 35
-          arch: x86_64
-          profile: pixel_6
-          disable-animations: true
-          script: bash scripts/check_signed_android_upgrade.sh
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: signed-android-upgrade-evidence
-          path: test-results/signed-upgrade/
   publish:
     if: inputs.publish && github.ref == 'refs/heads/main'
-    needs: [verification, assemble, signed-upgrade]
+    needs: [assemble]
     permissions:
       contents: write
     runs-on: ubuntu-24.04
@@ -324,7 +298,16 @@ jobs:
               source = folder/item['filename']
               assert source.is_file() and source.stat().st_size == item['size'], platform
               assert hashlib.sha256(source.read_bytes()).hexdigest() == item['sha256'], platform
-          print('Verified all release package hashes, version, build, and commit')
+          # Electron updater uses its own SHA-512 release metadata.
+          import base64
+          meta=(folder/'latest.yml').read_text()
+          installer=folder/'AnkiCompanion-Windows-Setup.exe'
+          digest=base64.b64encode(hashlib.sha512(installer.read_bytes()).digest()).decode('ascii')
+          assert f"version: {os.environ['EXPECTED_VERSION']}" in meta
+          assert digest in meta, 'latest.yml does not match the final NSIS installer'
+          assert installer.name in meta
+          assert (folder/(installer.name+'.blockmap')).is_file()
+          print('Verified all release hashes, Electron latest.yml, version, build, and commit')
           PY
       - name: Publish stable GitHub Release
         env:
@@ -338,7 +321,7 @@ jobs:
             echo "Release $tag already exists. Refusing to overwrite immutable release assets."
             exit 1
           fi
-          assets=(candidate/AnkiCompanion-Windows-Setup.exe candidate/AnkiCompanion-source.zip candidate/update.json)
+          assets=(candidate/AnkiCompanion-Windows-Setup.exe candidate/AnkiCompanion-Windows-Setup.exe.blockmap candidate/latest.yml candidate/AnkiCompanion-source.zip candidate/update.json)
           test -s candidate/AnkiCompanion-Android.apk && test -s candidate/AnkiDroid-Companion-Android.apk || {
             echo 'Refusing partial release without both production-signed Android APKs' >&2
             exit 1

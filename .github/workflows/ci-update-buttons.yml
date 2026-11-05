@@ -7,7 +7,9 @@ on:
       - 'companion/**'
       - 'tests/test_update_button_acceptance.py'
       - 'scripts/ci_android_update_button.sh'
-      - 'scripts/ci_windows_update_button.ps1'
+      - 'scripts/ci_windows_electron_update.ps1'
+      - 'updater/**'
+      - 'scripts/build_windows.ps1'
       - '.github/workflows/ci-update-buttons.yml'
   workflow_dispatch:
 permissions:
@@ -25,11 +27,14 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements-desktop.txt -r requirements-test.txt pyinstaller
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Click the Qt Update button without pairing
         run: python -m pytest -v tests/test_update_button_acceptance.py
-      - name: Two real installer versions driven by the installed GUI
+      - name: Install Electron/NSIS updater and bundled Python study app
         shell: pwsh
-        run: ./scripts/ci_windows_update_button.ps1
+        run: ./scripts/ci_windows_electron_update.ps1
       - uses: actions/upload-artifact@v4
         if: always()
         with:

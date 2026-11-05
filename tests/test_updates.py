@@ -160,3 +160,29 @@ def test_pre_update_backup_failure_stops_installer_without_data_loss(tmp_path,mo
     with pytest.raises(ValueError,match='no pairing token'):
         updates.preserve_windows_state_before_update(tmp_path)
     assert (root/'companion.sqlite3').read_bytes()==b'existing history'
+
+
+def test_windows_direct_github_download_never_uses_companion_server(tmp_path, monkeypatch):
+    """Installer retrieval is entirely independent of server URL/token/port."""
+    from companion import updates
+    payload=b'installer fixture, not an executable'
+    name='AnkiCompanion-Windows-Setup.exe'
+    release={'available':True, 'filename':name, 'size':len(payload),
+             'sha256':hashlib.sha256(payload).hexdigest(),
+             'download_url':updates.PUBLIC_RELEASES+name}
+    class GithubResponse(BytesIO):
+        def __enter__(self):return self
+        def __exit__(self,*args):self.close()
+        def geturl(self):return updates.PUBLIC_RELEASES+name
+    class GithubOpener:
+        def open(self,request,timeout=60):
+            assert request.full_url==release['download_url']
+            return GithubResponse(payload)
+
+    monkeypatch.setattr(updates.urllib.request,'build_opener',lambda:GithubOpener())
+    assert updates.download(release,tmp_path).read_bytes()==payload
+    assert not list(tmp_path.glob('*.partial'))
+    with pytest.raises(ValueError,match='Untrusted update URL'):
+        updates.download({**release,'download_url':None},tmp_path)
+    with pytest.raises(ValueError,match='Untrusted update URL'):
+        updates.download({**release,'download_url':'https://example.com/malware.exe'},tmp_path)
