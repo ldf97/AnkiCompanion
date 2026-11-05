@@ -46,8 +46,12 @@ def test_separate_android_updates_are_exposed_in_client():
     assert 'Update AnkiDroid Companion to ' in android
     assert 'ankidroid-update.json' in android
     windows=(ROOT/'desktop/app.py').read_text()
-    assert 'component_update_summary' in windows
-    assert 'remote_server=first_run.has_remote_connection(self.config)' in windows
+    shell=(ROOT/'updater/main.js').read_text()
+    manifest=(ROOT/'updater/package.json').read_text()
+    assert "subprocess.Popen([str(launcher),'--updates']" in windows
+    assert 'autoUpdater.downloadUpdate()' in shell
+    assert 'autoUpdater.quitAndInstall(false,true)' in shell
+    assert '"to": "desktop"' in manifest and '"to": "server"' in manifest
 
 
 def test_release_manifest_refuses_to_omit_any_installed_component(tmp_path):
