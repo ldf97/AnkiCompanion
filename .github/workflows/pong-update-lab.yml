@@ -1,0 +1,162 @@
+name: Pong Update Lab — independent EXE + APK
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'experiments/pong-update-lab/**'
+      - '.github/workflows/pong-update-lab.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: pong-update-lab-publish
+  cancel-in-progress: false
+jobs:
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test Vortex-style updater contracts
+        working-directory: experiments/pong-update-lab/windows
+        run: node --test test.cjs
+      - name: Build standalone Pong NSIS installer
+        working-directory: experiments/pong-update-lab/windows
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm install --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'npm dependencies failed' }
+          npm run dist
+          if ($LASTEXITCODE -ne 0) { throw 'Electron NSIS build failed' }
+          foreach($file in @('dist/PongLab-Windows-Setup.exe','dist/PongLab-Windows-Setup.exe.blockmap','dist/latest.yml')) {
+            if(-not (Test-Path $file)){throw "Missing Pong Windows artifact: $file"}
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pong-lab-windows
+          if-no-files-found: error
+          path: |
+            experiments/pong-update-lab/windows/dist/PongLab-Windows-Setup.exe
+            experiments/pong-update-lab/windows/dist/PongLab-Windows-Setup.exe.blockmap
+            experiments/pong-update-lab/windows/dist/latest.yml
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android SDK 35
+        run: |
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build test-signed independent Pong APK
+        working-directory: experiments/pong-update-lab/android
+        shell: bash
+        run: |
+          set -euo pipefail
+          # DEMO ONLY: intentionally public disposable signer, never production.
+          base64 -d demo-signing.p12.b64 > demo-signing.p12
+          export PONG_LAB_KEYSTORE="$PWD/demo-signing.p12"
+          keytool -list -keystore "$PONG_LAB_KEYSTORE" -storepass LabOnlyPong2026 -alias ponglab >/dev/null
+          bash ../../../android/gradlew --no-daemon --stacktrace assembleRelease
+          test -s app/build/outputs/apk/release/app-release.apk
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/PongLab-Android.apk"
+      - name: Generate integrity-checked Android update metadata
+        run: |
+          python3 - <<'PY'
+          import json,hashlib,pathlib,re
+          root=pathlib.Path('experiments/pong-update-lab')
+          version=json.loads((root/'VERSION.json').read_text())
+          gradle=(root/'android/app/build.gradle.kts').read_text()
+          assert re.search(r'versionCode\s*=\s*'+str(version['androidVersionCode']),gradle)
+          assert f'versionName = "{version["version"]}"' in gradle
+          apk=pathlib.Path('PongLab-Android.apk')
+          data=apk.read_bytes()
+          assert len(data)>10000
+          manifest={'version':version['version'],'version_code':version['androidVersionCode'],
+                    'size':len(data),'sha256':hashlib.sha256(data).hexdigest()}
+          pathlib.Path('pong-android.json').write_text(json.dumps(manifest,indent=2))
+          print('Android APK verified:',manifest)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pong-lab-android
+          if-no-files-found: error
+          path: |
+            PongLab-Android.apk
+            pong-android.json
+  publish:
+    needs: [windows, android]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pong-lab-windows
+          path: pong-windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: pong-lab-android
+          path: pong-android
+      - name: Verify release assets and matched versions
+        run: |
+          python3 - <<'PY'
+          import pathlib,re,hashlib,base64,json
+          version=json.loads(pathlib.Path('experiments/pong-update-lab/VERSION.json').read_text())
+          win=pathlib.Path('pong-windows/PongLab-Windows-Setup.exe')
+          meta=pathlib.Path('pong-windows/latest.yml').read_text()
+          sha=base64.b64encode(hashlib.sha512(win.read_bytes()).digest()).decode()
+          assert sha in meta, 'Vortex/Electron SHA-512 mismatch'
+          assert 'version: '+version['version'] in meta, 'Windows version mismatch'
+          assert win.name in meta
+          assert pathlib.Path(str(win)+'.blockmap').is_file()
+          apk=pathlib.Path('pong-android/PongLab-Android.apk')
+          android=json.loads(pathlib.Path('pong-android/pong-android.json').read_text())
+          assert android['version']==version['version']
+          assert android['version_code']==version['androidVersionCode']
+          assert android['size']==apk.stat().st_size
+          assert android['sha256']==hashlib.sha256(apk.read_bytes()).hexdigest()
+          assert version['channel']=='pong-update-lab'
+          print('PASS: both platforms are the same Pong release; no Anki binaries')
+          PY
+      - name: Publish isolated Pong prerelease channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=pong-update-lab
+          exe=pong-windows/PongLab-Windows-Setup.exe
+          block=pong-windows/PongLab-Windows-Setup.exe.blockmap
+          win_meta=pong-windows/latest.yml
+          apk=pong-android/PongLab-Android.apk
+          android_meta=pong-android/pong-android.json
+          version="$(python3 -c 'import json;print(json.load(open("experiments/pong-update-lab/VERSION.json"))["version"])')"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            # A stable channel address lets *installed old versions* fetch new
+            # metadata without knowing the future version or release tag.
+            # Put binary assets first, metadata LAST.
+            gh release upload "$tag" "$exe" "$block" "$apk" --clobber
+            gh release upload "$tag" "$win_meta" "$android_meta" --clobber
+            gh release edit "$tag" --title "Pong Update Lab v$version (independent test)" --notes "Standalone Pong only. Test signing key is public. No Anki components."
+          else
+            gh release create "$tag" "$exe" "$block" "$apk" "$win_meta" "$android_meta" \
+              --target "$GITHUB_SHA" \
+              --title "Pong Update Lab v$version (independent test)" \
+              --notes "Standalone Pong only. Test signing key is public. No Anki components." \
+              --prerelease
+          fi
+          echo "PONG DOWNLOADS:"
+          echo "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/PongLab-Windows-Setup.exe"
+          echo "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/PongLab-Android.apk"

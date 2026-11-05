@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Pong Update Lab</title>
+<style>
+:root {font-family:system-ui,Segoe UI,sans-serif;color:#e7f0ff;background:#0e1324}
+*{box-sizing:border-box}body{margin:0;padding:24px;text-align:center}
+header{display:flex;justify-content:space-between;align-items:center;max-width:650px;margin:auto}
+h1{font-size:24px;margin:0}small{color:#93a0bb}
+canvas{display:block;width:100%;max-width:650px;margin:17px auto;border:1px solid #44516c;border-radius:12px;background:#101b32;touch-action:none;box-shadow:0 10px 28px #060912}
+#panel{max-width:650px;text-align:left;margin:15px auto 0;background:#1a253b;padding:14px;border-radius:12px}
+#actions{display:flex;gap:8px;flex-wrap:wrap}
+button{border:0;border-radius:8px;background:#9af2dd;color:#14212a;font-weight:700;padding:10px 13px;cursor:pointer}
+button.secondary{background:#334058;color:#dbe6ff}
+button:disabled{opacity:.35;cursor:default}
+#status{margin:10px 0;color:#c1d1ed;font-size:14px}
+progress{width:100%;height:7px;display:none}
+footer{font-size:12px;color:#93a0bb;margin-top:12px}
+</style>
+</head><body>
+<header><h1>🏓 Pong Update Lab</h1><small>Version 1.0.0</small></header>
+<canvas id="game" width="650" height="420" aria-label="Pong game"></canvas>
+<div id="panel">
+ <div id="actions">
+ <button id="check">Check for update</button>
+ <button id="download" hidden>Download update</button>
+ <button id="install" hidden>Install and restart</button>
+ <button class="secondary" id="reset">Restart game</button>
+ </div>
+ <p id="status" role="status">Check for updates whenever a new version is published.</p>
+ <progress id="progress" max="100" value="0"></progress>
+</div>
+<footer>Move the bottom paddle with your mouse or ← →. First to 7 wins.</footer>
+<script>
+const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
+const W=canvas.width,H=canvas.height;
+let x=W/2,y=H/2,vx=3.8,vy=3.4,player=W/2,ai=W/2,points=0,computer=0,ended=false;
+const clamp=(a,l,r)=>Math.max(l,Math.min(r,a));
+function restart(){points=0;computer=0;ended=false;resetBall();}
+function resetBall(){x=W/2;y=H/2;vx=(Math.random()<.5?-1:1)*3.7;vy=(Math.random()<.5?-1:1)*3.4;}
+function frame(){
+ ctx.clearRect(0,0,W,H);
+ ctx.fillStyle='#19365c';ctx.fillRect(0,H/2-1,W,2);
+ ctx.setLineDash([8,10]);ctx.strokeStyle='#3e5985';ctx.beginPath();ctx.moveTo(0,H/2);ctx.lineTo(W,H/2);ctx.stroke();ctx.setLineDash([]);
+ ctx.fillStyle='#d6e0ff';ctx.font='bold 32px system-ui';ctx.textAlign='center';
+ ctx.fillText(computer+'  :  '+points,W/2,H/2-17);
+ const left=clamp(player-55,0,W-110),upper=clamp(ai-55,0,W-110);
+ ctx.fillStyle='#ffae78';ctx.fillRect(upper,30,110,12);
+ ctx.fillStyle='#9af2dd';ctx.fillRect(left,H-42,110,12);
+ if(!ended) {
+  x+=vx;y+=vy;
+  if(x<9||x>W-9)vx=-vx;
+  ai+=clamp(x-ai,-3.7,3.7);ai=clamp(ai,55,W-55);
+  if(y<49&&vy<0&&x>upper-8&&x<upper+118){vy=Math.abs(vy);vx+=(x-ai)/28;}
+  if(y>H-53&&vy>0&&x>left-8&&x<left+118){vy=-Math.abs(vy);vx+=(x-player)/25;}
+  vx=clamp(vx,-7,7);
+  if(y<0){points++;resetBall();}
+  if(y>H){computer++;resetBall();}
+  if(points>=7||computer>=7)ended=true;
+ }
+ ctx.beginPath();ctx.arc(x,y,8,0,Math.PI*2);ctx.fillStyle='#fff8ee';ctx.fill();
+ if(ended){ctx.fillStyle='#ffffff';ctx.font='bold 26px system-ui';ctx.fillText(points>=7?'You win!':'Computer wins!',W/2,H/2+52);}
+ requestAnimationFrame(frame);
+}
+canvas.addEventListener('mousemove',e=>{const r=canvas.getBoundingClientRect();player=clamp((e.clientX-r.left)*W/r.width,55,W-55);});
+window.addEventListener('keydown',e=>{if(e.key==='ArrowLeft')player=clamp(player-30,55,W-55);if(e.key==='ArrowRight')player=clamp(player+30,55,W-55);});
+document.querySelector('#reset').onclick=restart;
+resetBall();frame();
+const s=document.querySelector('#status'),check=document.querySelector('#check'),download=document.querySelector('#download'),install=document.querySelector('#install'),progress=document.querySelector('#progress');
+window.updates.subscribe(u=>{
+ s.textContent=u.message;progress.value=u.percent||0;progress.style.display=u.stage==='downloading'?'block':'none';
+ check.disabled=['checking','downloading','installing'].includes(u.stage);
+ download.hidden=u.stage!=='available';install.hidden=u.stage!=='staged';
+});
+window.updates.state().then(u=>{if(u)s.textContent=u.message;});
+check.onclick=()=>window.updates.check();
+download.onclick=()=>window.updates.download();
+install.onclick=()=>window.updates.install();
+</script>
+</body></html>
