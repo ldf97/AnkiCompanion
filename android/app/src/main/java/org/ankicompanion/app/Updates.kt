@@ -13,6 +13,9 @@ import android.provider.Settings
 import androidx.core.content.FileProvider
 import org.json.JSONObject
 import java.io.File
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 /**
  * Only instrumentation in a debuggable build may redirect the release transport
@@ -34,6 +37,13 @@ internal object UpdateAcceptanceTransport {
 }
 
 object Updates {
+    // Identical transport library to Mihon's APK updater, shared by release
+    // lookup and download. Android's OS installer retains final authority.
+    private val http = OkHttpClient.Builder()
+        .connectTimeout(15,TimeUnit.SECONDS)
+        .readTimeout(60,TimeUnit.SECONDS)
+        .followRedirects(true)
+        .build()
     fun check(context:Context,force:Boolean=false):JSONObject? {
         val store=Storage(context);val cached=store.load("update.json")
         if(!force && cached!=null && System.currentTimeMillis()-cached.optLong("checked_ms")<60*60*1000)return cached
@@ -80,16 +90,21 @@ object Updates {
     private fun githubRelease(platform:String="android",context:Context?=null):JSONObject {
         val source=UpdateAcceptanceTransport.emulatorUrl(UpdateAcceptanceTransport.manifestUrl)
             ?: "https://github.com/ldf97/AnkiCompanion/releases/latest/download/update.json"
-        val request=java.net.URL(source).openConnection() as java.net.HttpURLConnection
-        request.connectTimeout=12000;request.readTimeout=15000
-        val data=request.inputStream.use{source->
-            val out=java.io.ByteArrayOutputStream()
-            val buffer=ByteArray(8192)
-            while(true){val n=source.read(buffer);if(n<0)break
-                require(out.size()+n<=128*1024){"Release manifest too large"}
-                out.write(buffer,0,n)
+        val request=Request.Builder().url(source).header("Accept","application/json").build()
+        val data=http.newCall(request).execute().use { response ->
+            require(response.isSuccessful){"GitHub release check failed: HTTP ${response.code}"}
+            val body=response.body ?: error("GitHub release has no manifest")
+            body.byteStream().use { input ->
+                val out=java.io.ByteArrayOutputStream()
+                val buffer=ByteArray(8192)
+                while(true) {
+                    val n=input.read(buffer)
+                    if(n<0)break
+                    require(out.size()+n<=128*1024){"Release manifest too large"}
+                    out.write(buffer,0,n)
+                }
+                out.toByteArray()
             }
-            out.toByteArray()
         }
         val manifest=JSONObject(String(data,Charsets.UTF_8))
         require(manifest.getInt("schema_version")==1){"Invalid release manifest"}
@@ -130,32 +145,49 @@ object Updates {
             .setContentText("Version "+result.optString("version")+" · tap to update").setContentIntent(intent).setAutoCancel(true).build()
         manager.notify(notificationId,notice)
     }
-    fun download(context:Context,release:JSONObject):File {
+    fun download(
+        context:Context,
+        release:JSONObject,
+        onProgress:(Int)->Unit = {}
+    ):File {
         require(release.getBoolean("available")){"No update available"}
         val target=release.optString("target_package",context.packageName)
         require(target==context.packageName || target=="com.ichi2.anki.companion"){"Unknown update package"}
-        val dest=File(context.filesDir,if(target==context.packageName)"updates/companion-update.apk" else "updates/ankidroid-companion-update.apk")
-        // Only official public GitHub releases are installable: no paired server path.
+        val dest=File(context.filesDir,if(target==context.packageName)
+            "updates/companion-update.apk" else "updates/ankidroid-companion-update.apk")
         val address=release.getString("download_url")
         require(address.startsWith("https://github.com/ldf97/AnkiCompanion/releases/latest/download/")){"Untrusted update source"}
         val temp=File(dest.path+".partial")
         dest.parentFile?.mkdirs()
+        val digest=java.security.MessageDigest.getInstance("SHA-256")
+        var total=0L
+        var lastProgress=-1
         try {
-            val digest=java.security.MessageDigest.getInstance("SHA-256")
-            var total=0L
+            // Mihon's pattern: OkHttp call -> streaming body -> progress -> APK.
             val source=UpdateAcceptanceTransport.emulatorUrl(UpdateAcceptanceTransport.assetUrl) ?: address
-            (java.net.URL(source).openConnection() as java.net.HttpURLConnection).apply{
-                connectTimeout=15000;readTimeout=60000
-            }.inputStream.use{input->temp.outputStream().use{output->
-                val buf=ByteArray(65536)
-                while(true){val count=input.read(buf);if(count<0)break
-                    total+=count;require(total<=200L*1024*1024 && total<=release.getLong("size")){"Update exceeds declared size"}
-                    digest.update(buf,0,count);output.write(buf,0,count)
-                }
-            }}
+            val request=Request.Builder().url(source).header("Accept","application/octet-stream").build()
+            http.newCall(request).execute().use { response ->
+                require(response.isSuccessful){"APK download failed: HTTP ${response.code}"}
+                val body=response.body ?: error("Empty APK download")
+                require(response.request.url.isHttps || BuildConfig.DEBUG &&
+                    response.request.url.host=="10.0.2.2"){"Insecure APK download redirect"}
+                body.byteStream().use { input ->temp.outputStream().use { output ->
+                    val buffer=ByteArray(65536)
+                    while(true){
+                        val count=input.read(buffer)
+                        if(count<0)break
+                        total+=count
+                        require(total<=release.getLong("size") && total<=200L*1024*1024){"Update exceeds declared size"}
+                        digest.update(buffer,0,count);output.write(buffer,0,count)
+                        val progress=(total*100/release.getLong("size")).toInt()
+                        if(progress!=lastProgress){lastProgress=progress;onProgress(progress)}
+                    }
+                }}
+            }
             val hex=digest.digest().joinToString(""){"%02x".format(it)}
             require(total==release.getLong("size") && hex==release.getString("sha256")){"Release checksum mismatch"}
             require(temp.renameTo(dest)){"Could not finalize APK download"}
+            onProgress(100)
         } finally {temp.delete()}
         val flags=if(Build.VERSION.SDK_INT>=28)PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
         val info=context.packageManager.getPackageArchiveInfo(dest.path,flags) ?: error("Invalid APK")
@@ -170,14 +202,9 @@ object Updates {
         val new=(if(Build.VERSION.SDK_INT>=28)
             info.signingInfo?.signingCertificateHistory ?: info.signingInfo?.apkContentsSigners
             else info.signatures)?.map{it.toCharsString()}?.toSet()
-        // Valid signing-key rotation lineages share the original certificate.
-        // The OS will do its authoritative APK signature/lineage validation.
-        // Installing a missing companion is permitted. Updating an installed
-        // package requires the SAME signer, or a valid Android signing lineage.
-        // A public update can never bypass this platform security requirement.
         require(!new.isNullOrEmpty()){"Release has no readable signing certificate"}
-        if(installed!=null)require(!old.isNullOrEmpty() && old.intersect(new).isNotEmpty()) {
-            "The installed Android app uses an incompatible signing certificate. The update was stopped BEFORE touching existing data. A compatible key or guided data migration is required."
+        if(installed!=null)require(!old.isNullOrEmpty() && old.intersect(new).isNotEmpty()){
+            "The installed Android app uses an incompatible signing certificate. Existing data was not modified."
         }
         return dest
     }
