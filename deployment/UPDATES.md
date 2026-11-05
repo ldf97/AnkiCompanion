@@ -1,54 +1,60 @@
-# Direct GitHub application updates
+# Update architecture: Vortex (Windows) + Mihon (Android)
 
-Both operating systems update from public GitHub Releases in this existing repository. No
-additional updater service, account, Google Play listing, Microsoft Store listing, or
-owner-operated PowerShell command is needed. Updating the source branch alone does
-not update installed applications: GitHub must have a newer published release.
+The updater uses the existing public GitHub repository and releases. No separate
+hosting, Microsoft Store, Google Play listing, new user account or paid signing
+subscription is needed. The Windows release is an Electron/NSIS installer and
+the two Android applications use native Android APK installation.
 
-## Windows
+## Windows: electron-updater + NSIS
 
-- The PySide6 **App updates** button checks
-  `https://github.com/ldf97/AnkiCompanion/releases/latest/download/update.json`
-  independently of the local study server, pairing token, and port 8766.
-- It compares the installed version, downloads the Windows Inno Setup executable
-  from the same GitHub release, enforces its declared byte count and SHA-256,
-  and verifies it again before starting the ordinary Windows installer.
-- The installer replaces the bundled desktop program, local server and packaged
-  Anki bridge, while keeping the local study database and pairing token outside
-  the program directory. A verified backup is taken before installation.
-- An optional Windows Authenticode publisher pin is enforced if that build has
-  configured one. Buying/configuring a signing certificate is **not required**
-  for the SHA-256-verified GitHub-release update path. The optional check currently
-  uses PowerShell internally; users never have to run a command.
-- The update button has its own persistent status and a visible error dialog.
-  Local study-server connection failures cannot hide its check/download errors.
+- The PySide6 study GUI no longer contacts a server or downloads application
+  installers. Its **App updates** button launches the installed
+  `AnkiCompanion.exe --updates` Electron shell and closes the study GUI.
+- The Electron shell is also the regular launcher for the bundled Python
+  study GUI and server. `updater/main.js` implements the same core
+  `electron-updater` calls as Vortex:
+  `autoUpdater.checkForUpdates()`, `downloadUpdate()`,
+  `quitAndInstall()`. The updater shows progress and errors.
+- `electron-builder` packages a Windows per-user NSIS installer; it
+  generates `latest.yml` with SHA-512 and the NSIS `.blockmap` in
+  addition to `AnkiCompanion-Windows-Setup.exe`.
+- The existing release workflow publishes these files to GitHub Releases.
+  Installer code lives beneath `resources/desktop/` and `resources/server/`;
+  study data/pairing remains beneath `%LOCALAPPDATA%/AnkiCompanion/server/`
+  and is not overwritten.
+- The installed server's separate `--backup-before-update` command performs a
+  checked backup. Electron requests authenticated loopback shutdown of the
+  local server prior to NSIS replacing its files.
+- Windows Authenticode signing is optional. If a certificate already exists
+  in GitHub Actions secrets, electron-builder signs **before** generating
+  SHA-512 metadata. A Windows SmartScreen warning may occur on unsigned builds.
+- Existing Inno Setup installations lack the Electron shell and **cannot
+  self-upgrade using this architecture**. A single installation of the new
+  NSIS release is required to transition. The existing study database is
+  kept outside the program installation folder. Verify shortcut migration
+  and preserved data on a real owner device before marking transition done.
 
-## Android
+## Android: OkHttp + Android installer
 
-- Both the Android Companion and the separately packaged AnkiDroid Companion
-  fetch the same public GitHub release manifest. No paired Windows server is
-  involved in application updates.
-- APK downloads are checked for size, SHA-256, Android package identity,
-  increasing version code, and compatible installed signing identity before
-  passing the APK to Android's own package installer.
-- Android requires the user to approve app installation from this source once
-  (if not already allowed) and confirm installation. The app resumes a verified
-  downloaded APK after that permission is granted.
-- Android's security model **requires** an existing package's release signing
-  identity to remain compatible across updates. This is not a paid service or
-  an optional permission we can bypass; the existing CI release key must
-  remain stable. A debug APK signed with a different key cannot overwrite
-  the user's release APK without migration.
+- The companion and separate AnkiDroid Companion both check public GitHub
+  Releases directly without a local Windows server or pairing.
+- Like Mihon, `Updates.kt` uses OkHttp for release discovery and streamed
+  APK downloads, with UI progress. APK size/SHA-256, package ID, increasing
+  version code and installed signing identity are checked.
+- Android's own package installer applies the update after one-time
+  unknown-apps permission (if needed) and a normal install confirmation.
+- Existing Android apps **must** be upgraded with the same signing identity
+  or a valid Android certificate rotation lineage. No new payment or account
+  is required, but this OS security rule cannot be bypassed.
 
-## Publishing and verification
+## Tests / release gate
 
-The existing GitHub Actions build/release workflow packages Windows and both
-Android APKs, along with a shared `update.json`. CI verifies packaging and
-checks upgrade behavior on disposable Windows/Android environments. Production
-signing material, where required, remains in existing GitHub secrets rather
-than in the app or source repository.
+The Windows acceptance workflow builds an installed Electron NSIS package
+and checks its metadata and bundled components. The Android workflow exercises
+the app's real update button in an emulator. A newly installed version A
+to version B native upgrade (Windows and Android), including review and
+pairing continuity, remains the final acceptance standard.
 
-A published update must have its installer/APKs and matching manifest; installing
-onto an existing device is the final acceptance test. Never uninstall the
-existing app to get around a signing error: preserve the study database,
-native Anki review history, and private skins.
+Do not merge/publish solely because source-level checks pass. Running
+source from a GitHub branch does not replace already-installed application
+binaries; publish a higher version and test the installed binary first.
