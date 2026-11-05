@@ -40,9 +40,8 @@ def test_unpaired_desktop_update_button_initiates_verified_install(monkeypatch, 
         calls.append(("looked_up", platform))
         return release
 
-    def downloaded(client, offer, folder):
+    def downloaded(offer, folder):
         # Official GitHub updates do not require an API server or pairing token.
-        assert client is None
         assert offer == release
         calls.append(("downloaded", target.name))
         return target
