@@ -143,6 +143,10 @@ class Window(QMainWindow):
         for b in (goals,skins,compact):footer.addWidget(b)
         box.addLayout(footer);note=QLabel('A lesson maintains your streak. Anki decides which cards are available.');note.setWordWrap(True);note.setObjectName('muted');box.addWidget(note)
         self.update_button=QPushButton('App updates · '+updates.version()['version']);self.update_button.clicked.connect(lambda:self.check_updates(True));box.addWidget(self.update_button)
+        # Never mix updater feedback with the status label refreshed by the study server.
+        self.update_status=QLabel('Updates: ready to check GitHub');self.update_status.setObjectName('muted')
+        self.update_status.setWordWrap(True);box.addWidget(self.update_status)
+        self._update_check_busy=False;self._update_check_interactive=False
         self.repair_button=QPushButton('Repair setup · Anki bridge / server');self.repair_button.clicked.connect(self.repair_setup);box.addWidget(self.repair_button)
         # Anki can be installed AFTER the companion. Retry safe add-on setup
         # periodically without asking the owner to run commands or copy files.
@@ -208,10 +212,10 @@ class Window(QMainWindow):
         job.failed.connect(lambda _:setattr(self,'_bootstrapping',False))
 
     def client(self):return Client(self.config.get('url',LOCAL_URL),self.config.get('token',''),self.config.get('allow_lan_http',False))
-    def launch(self,fn,success=None):
+    def launch(self,fn,success=None,error=None):
         job=Job(fn,self);self.jobs.append(job)
         job.succeeded.connect(success or (lambda result:self.refresh()))
-        job.failed.connect(lambda msg:self.status.setText('Action failed: '+msg))
+        job.failed.connect(error or (lambda msg:self.status.setText('Action failed: '+msg)))
         job.finished.connect(lambda:self.jobs.remove(job));job.finished.connect(job.deleteLater);job.start();return job
     def refresh(self):
         if self.syncing or not self.config.get('token'):return
@@ -398,36 +402,71 @@ class Window(QMainWindow):
         self.launch(lambda:self.client().request('/v1/skins'),show)
     def show_dock(self):self.hide();self.dock.show();self.dock.raise_()
     def check_updates(self,interactive=False):
-        # Stable GitHub release checks must work before pairing or while the server is offline.
+        """Check GitHub directly, even without pairing or a working local server."""
+        if self._update_check_busy:
+            if interactive:
+                self._update_check_interactive=True
+                self.update_status.setText('Checking GitHub for updates…')
+            return
+        self._update_check_busy=True
+        self._update_check_interactive=interactive
+        if interactive:self.update_status.setText('Checking GitHub for updates…')
         platform='windows' if sys.platform=='win32' else 'source'
+
+        def failed(message):
+            wants_dialog=self._update_check_interactive
+            self._update_check_busy=False;self._update_check_interactive=False
+            self.update_status.setText('Update check failed: '+message)
+            if wants_dialog:
+                QMessageBox.warning(self,'Could not check for updates',
+                    'GitHub could not be checked. Your installed app and study data have not changed.\n\n'+message)
+
         def received(release):
+            wants_dialog=self._update_check_interactive
+            self._update_check_busy=False;self._update_check_interactive=False
             if not release.get('configured'):
-                if interactive:
-                    from PySide6.QtWidgets import QInputDialog
-                    repository,ok=QInputDialog.getText(self,'GitHub update source','GitHub repository (owner/name):')
-                    if ok and repository.strip() and self.current:
-                        payload=dict(self.current['settings'],update_repository=repository.strip())
-                        self.launch(lambda:self.client().request('/v1/settings','PUT',payload),lambda _:self.check_updates(True))
+                self.update_status.setText(release.get('message','No published GitHub release available'))
                 return
-            self.update_button.setText(('Update Windows bundle to '+release['version']) if release.get('available') else ('Windows bundle up to date · '+updates.version()['version']))
-            if release.get('available'):
-                if not interactive:
-                    if self.tray.isVisible() and self._last_notified_release!=release['version']:
-                        self._last_notified_release=release['version']
-                        self.tray.showMessage('Anki Companion update','Version '+release['version']+' is ready. Open the app and click Update.')
-                    return
-                components=updates.component_update_summary(
-                    release,remote_server=first_run.has_remote_connection(self.config))
-                text=release.get('notes','')[:1500]+'\n\nSource commit: '+release.get('commit','')
-                text+='\n\nComponent updates:\n'+components
-                if QMessageBox.question(self,'Update to '+release['version'],text+'\n\nDownload and update?')==QMessageBox.StandardButton.Yes:
-                    def ready(path):
-                        try:updates.install(path,release);self.quit_app()
-                        except ValueError as exc:self.status.setText(str(exc)+' Downloaded to '+str(path))
-                    self.status.setText('Downloading and verifying update…')
-                    self.launch(lambda:updates.download(None,release,self.storage/'updates'),ready)
-            elif interactive:self.status.setText(release.get('message','No newer release'))
-        self.launch(lambda:updates.github_release(platform),received)
+            if not release.get('available'):
+                self.update_button.setText('Windows bundle up to date · '+updates.version()['version'])
+                if wants_dialog:self.update_status.setText(release.get('message','Already up to date'))
+                return
+
+            self.update_button.setText('Update Windows bundle to '+release['version'])
+            self.update_status.setText('Windows update '+release['version']+' available from GitHub')
+            if not wants_dialog:
+                if self.tray.isVisible() and self._last_notified_release!=release['version']:
+                    self._last_notified_release=release['version']
+                    self.tray.showMessage('Anki Companion update',
+                        'Version '+release['version']+' is ready. Open the app and click Update.')
+                return
+
+            components=updates.component_update_summary(
+                release,remote_server=first_run.has_remote_connection(self.config))
+            message=release.get('notes','')[:1500]+'\n\nSource commit: '+release.get('commit','')
+            message+='\n\nComponent updates:\n'+components
+            if QMessageBox.question(self,'Update to '+release['version'],
+                    message+'\n\nDownload and update?')!=QMessageBox.StandardButton.Yes:
+                return
+
+            self.update_status.setText('Downloading and verifying Windows update…')
+            def download_failed(error):
+                self.update_status.setText('Update download failed: '+error)
+                QMessageBox.warning(self,'Update failed',
+                    'The existing installation was not replaced.\n\n'+error)
+
+            def ready(path):
+                try:
+                    self.update_status.setText('Verified; starting Windows installer…')
+                    updates.install(path,release)
+                    self.quit_app()
+                except Exception as exc:
+                    download_failed(str(exc))
+
+            self.launch(lambda:updates.download(None,release,self.storage/'updates'),
+                        ready,error=download_failed)
+
+        self.launch(lambda:updates.github_release(platform),received,error=failed)
     def restore(self):self.dock.hide();self.showNormal();self.raise_();self.activateWindow()
     def closeEvent(self,event):
         if self.quitting:event.accept();return
