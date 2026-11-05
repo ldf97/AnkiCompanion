@@ -137,26 +137,26 @@ object Updates {
         val dest=File(context.filesDir,if(target==context.packageName)"updates/companion-update.apk" else "updates/ankidroid-companion-update.apk")
         // Only official public GitHub releases are installable: no paired server path.
         val address=release.getString("download_url")
-            require(address.startsWith("https://github.com/ldf97/AnkiCompanion/releases/latest/download/")){"Untrusted update source"}
-            val temp=File(dest.path+".partial")
-            dest.parentFile?.mkdirs()
-            try {
-                val digest=java.security.MessageDigest.getInstance("SHA-256")
-                var total=0L
-                val source=UpdateAcceptanceTransport.emulatorUrl(UpdateAcceptanceTransport.assetUrl) ?: address
-                (java.net.URL(source).openConnection() as java.net.HttpURLConnection).apply{
-                    connectTimeout=15000;readTimeout=60000
-                }.inputStream.use{input->temp.outputStream().use{output->
-                    val buf=ByteArray(65536)
-                    while(true){val count=input.read(buf);if(count<0)break
-                        total+=count;require(total<=200L*1024*1024 && total<=release.getLong("size")){"Update exceeds declared size"}
-                        digest.update(buf,0,count);output.write(buf,0,count)
-                    }
-                }}
-                val hex=digest.digest().joinToString(""){"%02x".format(it)}
-                require(total==release.getLong("size") && hex==release.getString("sha256")){"Release checksum mismatch"}
-                require(temp.renameTo(dest)){"Could not finalize APK download"}
-            } finally {temp.delete()}
+        require(address.startsWith("https://github.com/ldf97/AnkiCompanion/releases/latest/download/")){"Untrusted update source"}
+        val temp=File(dest.path+".partial")
+        dest.parentFile?.mkdirs()
+        try {
+            val digest=java.security.MessageDigest.getInstance("SHA-256")
+            var total=0L
+            val source=UpdateAcceptanceTransport.emulatorUrl(UpdateAcceptanceTransport.assetUrl) ?: address
+            (java.net.URL(source).openConnection() as java.net.HttpURLConnection).apply{
+                connectTimeout=15000;readTimeout=60000
+            }.inputStream.use{input->temp.outputStream().use{output->
+                val buf=ByteArray(65536)
+                while(true){val count=input.read(buf);if(count<0)break
+                    total+=count;require(total<=200L*1024*1024 && total<=release.getLong("size")){"Update exceeds declared size"}
+                    digest.update(buf,0,count);output.write(buf,0,count)
+                }
+            }}
+            val hex=digest.digest().joinToString(""){"%02x".format(it)}
+            require(total==release.getLong("size") && hex==release.getString("sha256")){"Release checksum mismatch"}
+            require(temp.renameTo(dest)){"Could not finalize APK download"}
+        } finally {temp.delete()}
         val flags=if(Build.VERSION.SDK_INT>=28)PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
         val info=context.packageManager.getPackageArchiveInfo(dest.path,flags) ?: error("Invalid APK")
         require(info.packageName==target){"Update has a different package ID"}
