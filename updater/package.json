@@ -1,0 +1,86 @@
+{
+  "name": "ankicompanion-shell",
+  "productName": "AnkiCompanion",
+  "version": "0.1.1",
+  "private": true,
+  "main": "main.js",
+  "description": "Windows launcher and GitHub updater for AnkiCompanion",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dist": "electron-builder --win nsis --x64 --publish never"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11"
+  },
+  "devDependencies": {
+    "electron": "44.10.2",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "org.ankicompanion.desktop",
+    "productName": "AnkiCompanion",
+    "asar": true,
+    "directories": {
+      "output": "../packages"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "updates.html",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist/AnkiCompanion",
+        "to": "desktop",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../dist/AnkiCompanionServer",
+        "to": "server",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../packages/Anki_Companion_Bridge.ankiaddon",
+        "to": "Anki_Companion_Bridge.ankiaddon"
+      },
+      {
+        "from": "../deployment",
+        "to": "deployment",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../deployment/cloudflared.exe",
+        "to": "tools/cloudflared.exe"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "AnkiCompanion-Windows-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ldf97",
+        "repo": "AnkiCompanion"
+      }
+    ]
+  }
+}

@@ -30,6 +30,7 @@ class MainActivity:Activity() {
     private lateinit var mode:Spinner
     private lateinit var updateButton:Button
     private lateinit var ankidroidUpdateButton:Button
+    private lateinit var updateStatus:TextView
     private var state:JSONObject?=null
     private var decks=listOf<JSONObject>()
     private var renderedKey=""
@@ -63,6 +64,7 @@ class MainActivity:Activity() {
         val settings=LinearLayout(this);settings.addView(button("Lesson & day"){goals()});settings.addView(button("Skins"){skins()});box.addView(settings)
         updateButton=button("App updates · "+BuildConfig.VERSION_NAME){updates()};box.addView(updateButton)
         ankidroidUpdateButton=button("AnkiDroid Companion updates"){ankidroidUpdates()};box.addView(ankidroidUpdateButton)
+        updateStatus=text("Updates: ready to check GitHub",12f);box.addView(updateStatus)
         box.addView(button("Update signing diagnostics"){signingDiagnostics()})
         box.addView(button("Portable recovery · incompatible signing only"){recoveryMenu()})
         // FCM wakeups replace the old continuous one-second live polling mode.
@@ -94,15 +96,17 @@ class MainActivity:Activity() {
             if(candidate.parentFile==updateDirectory && candidate.isFile && candidate.name.endsWith(".apk")) {
                 handler.post { try {
                     if(Updates.install(this,candidate))storage.setSetting("pending_update_path","")
-                }catch(e:Exception){status.text=e.message ?: "Update installation failed"} }
+                }catch(e:Exception){updateStatus.text=e.message ?: "Update installation failed"} }
             } else storage.setSetting("pending_update_path","")
         }
     }
     override fun onPause(){resumed=false;unregisterReceiver(syncReceiver);super.onPause()}
-    private fun async(work:()->Any?,executor:java.util.concurrent.Executor=Sync.executor,after:(Any?)->Unit={refresh()}) {
+    private fun async(work:()->Any?,executor:java.util.concurrent.Executor=Sync.executor,
+                      onError:(Exception)->Unit={e->status.text=e.message ?: "Action failed"},
+                      after:(Any?)->Unit={refresh()}) {
         executor.execute {
             try {val result=work();runOnUiThread{if(!isFinishing)after(result)}}
-            catch(e:Exception){runOnUiThread{if(!isFinishing)status.text=e.message ?: "Action failed"}}
+            catch(e:Exception){runOnUiThread{if(!isFinishing)onError(e)}}
         }
     }
     private fun refresh() {
@@ -300,36 +304,48 @@ class MainActivity:Activity() {
         AlertDialog.Builder(this).setTitle("Update compatibility").setMessage(message).setPositiveButton("OK",null).show()
     }
     private fun ankidroidUpdates() {
-        status.text="Checking production-signed AnkiDroid Companion release…"
-        async({Updates.checkAnkiDroid(applicationContext,true)},updateExecutor){result->
+        updateStatus.text="Checking GitHub for AnkiDroid Companion updates…"
+        async({Updates.checkAnkiDroid(applicationContext,true)},updateExecutor,
+            onError={e->updateStatus.text="Update check failed: "+(e.message ?: "Network error")}){result->
             val release=result as? JSONObject ?: return@async
-            if(!release.optBoolean("available")){status.text=release.optString("message","No newer release");return@async}
+            if(!release.optBoolean("available")){updateStatus.text=release.optString("message","No newer release");return@async}
             val installed=Updates.signingFingerprint(this,"com.ichi2.anki.companion")!="Not installed"
             AlertDialog.Builder(this).setTitle(if(installed)"Update AnkiDroid Companion" else "Install AnkiDroid Companion")
                 .setMessage("Use the production-signed ${release.optString("version")} package. Review data stays in AnkiDroid and native AnkiWeb sync.")
                 .setNegativeButton("Later",null).setPositiveButton("Continue"){_,_->
-                    status.text="Downloading and checking AnkiDroid Companion…"
-                    async({Updates.download(applicationContext,null,release)},updateExecutor){file->installDownloaded(file as File)}
+                    updateStatus.text="Downloading and verifying AnkiDroid Companion…"
+                    async({Updates.download(applicationContext,release){ percent ->
+                        runOnUiThread{if(!isFinishing)updateStatus.text="Downloading AnkiDroid Companion: $percent%"}
+                    }},updateExecutor,
+                        onError={e->updateStatus.text="Update download failed: "+(e.message ?: "Network error")}){file->installDownloaded(file as File)}
                 }.show()
         }
     }
     private fun installDownloaded(file:File) {
-        // Remember a verified package if Android requires one-time permission.
-        // No export, reinstall or manual file selection is needed.
-        val candidate=file.canonicalFile
-        require(candidate.parentFile==File(filesDir,"updates").canonicalFile){"Unexpected installer location"}
-        storage.setSetting("pending_update_path",candidate.path)
-        if(Updates.install(this,candidate))storage.setSetting("pending_update_path","")
+        // Preserve the verified APK if Android needs one-time install permission.
+        try {
+            val candidate=file.canonicalFile
+            require(candidate.parentFile==File(filesDir,"updates").canonicalFile){"Unexpected installer location"}
+            storage.setSetting("pending_update_path",candidate.path)
+            updateStatus.text="Opening Android's installer…"
+            if(Updates.install(this,candidate))storage.setSetting("pending_update_path","")
+        } catch(e:Exception) {
+            updateStatus.text="Could not open installer: "+(e.message ?: "Unknown error")
+        }
     }
 
     private fun updates() {
-        status.text="Checking GitHub release…"
-        async({Updates.check(applicationContext,null,true)},updateExecutor){result->
+        updateStatus.text="Checking GitHub for Android Companion updates…"
+        async({Updates.check(applicationContext,true)},updateExecutor,
+            onError={e->updateStatus.text="Update check failed: "+(e.message ?: "Network error")}){result->
             val release=result as? JSONObject ?: return@async
-            if(!release.optBoolean("available")){status.text=release.optString("message","No newer release");return@async}
+            if(!release.optBoolean("available")){updateStatus.text=release.optString("message","No newer release");return@async}
             AlertDialog.Builder(this).setTitle("Update to "+release.getString("version")).setMessage(release.optString("notes")+"\nSource commit: "+release.optString("commit")).setNegativeButton("Later",null).setPositiveButton("Update"){_,_->
-                status.text="Downloading and verifying update…"
-                async({Updates.download(applicationContext,null,release)},updateExecutor){file->installDownloaded(file as File)}
+                updateStatus.text="Downloading and verifying Android Companion…"
+                async({Updates.download(applicationContext,release){ percent ->
+                        runOnUiThread{if(!isFinishing)updateStatus.text="Downloading Android Companion: $percent%"}
+                    }},updateExecutor,
+                    onError={e->updateStatus.text="Update download failed: "+(e.message ?: "Network error")}){file->installDownloaded(file as File)}
             }.show()
         }
     }

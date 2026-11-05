@@ -112,7 +112,7 @@ object Sync {
                             reason.startsWith("Sign in"))"false" else "true")
                     }
                 }
-                try {Updates.check(context,api)}catch(e:Exception){store.setSetting("update_error",e.message ?: "Update check failed")}
+                try {Updates.check(context)}catch(e:Exception){store.setSetting("update_error",e.message ?: "Update check failed")}
                 try {Updates.checkAnkiDroid(context)}catch(e:Exception){store.setSetting("ankidroid_update_error",e.message ?: "Update check failed")}
                 // The first state was fetched BEFORE native synchronization.
                 // Never cache that stale pending revision as the final result.

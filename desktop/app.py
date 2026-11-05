@@ -1,4 +1,4 @@
-import sys, os, json, time, tempfile, math, threading
+import sys, os, json, time, tempfile, math, threading, subprocess
 from pathlib import Path
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QStandardPaths, QSize
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QImage, QAction
@@ -143,6 +143,10 @@ class Window(QMainWindow):
         for b in (goals,skins,compact):footer.addWidget(b)
         box.addLayout(footer);note=QLabel('A lesson maintains your streak. Anki decides which cards are available.');note.setWordWrap(True);note.setObjectName('muted');box.addWidget(note)
         self.update_button=QPushButton('App updates · '+updates.version()['version']);self.update_button.clicked.connect(lambda:self.check_updates(True));box.addWidget(self.update_button)
+        # Never mix updater feedback with the status label refreshed by the study server.
+        self.update_status=QLabel('Updates handled by Windows updater');self.update_status.setObjectName('muted')
+        self.update_status.setWordWrap(True);box.addWidget(self.update_status)
+        self._update_check_busy=False;self._update_check_interactive=False
         self.repair_button=QPushButton('Repair setup · Anki bridge / server');self.repair_button.clicked.connect(self.repair_setup);box.addWidget(self.repair_button)
         # Anki can be installed AFTER the companion. Retry safe add-on setup
         # periodically without asking the owner to run commands or copy files.
@@ -152,7 +156,7 @@ class Window(QMainWindow):
         if autostart and sys.platform=='win32':self.maintenance_timer.start(60*1000)
         self._last_notified_release=None
         self.update_timer=QTimer(self);self.update_timer.timeout.connect(lambda:self.check_updates(False))
-        if autostart:self.update_timer.start(15*60*1000);QTimer.singleShot(3000,lambda:self.check_updates(False))
+        # Release checks now belong to the Electron updater, not Python.
         self.timer=QTimer(self);self.timer.timeout.connect(self.refresh)
         if autostart:
             self.timer.start(5000)
@@ -208,10 +212,10 @@ class Window(QMainWindow):
         job.failed.connect(lambda _:setattr(self,'_bootstrapping',False))
 
     def client(self):return Client(self.config.get('url',LOCAL_URL),self.config.get('token',''),self.config.get('allow_lan_http',False))
-    def launch(self,fn,success=None):
+    def launch(self,fn,success=None,error=None):
         job=Job(fn,self);self.jobs.append(job)
         job.succeeded.connect(success or (lambda result:self.refresh()))
-        job.failed.connect(lambda msg:self.status.setText('Action failed: '+msg))
+        job.failed.connect(error or (lambda msg:self.status.setText('Action failed: '+msg)))
         job.finished.connect(lambda:self.jobs.remove(job));job.finished.connect(job.deleteLater);job.start();return job
     def refresh(self):
         if self.syncing or not self.config.get('token'):return
@@ -398,36 +402,32 @@ class Window(QMainWindow):
         self.launch(lambda:self.client().request('/v1/skins'),show)
     def show_dock(self):self.hide();self.dock.show();self.dock.raise_()
     def check_updates(self,interactive=False):
-        # Stable GitHub release checks must work before pairing or while the server is offline.
-        platform='windows' if sys.platform=='win32' else 'source'
-        def received(release):
-            if not release.get('configured'):
-                if interactive:
-                    from PySide6.QtWidgets import QInputDialog
-                    repository,ok=QInputDialog.getText(self,'GitHub update source','GitHub repository (owner/name):')
-                    if ok and repository.strip() and self.current:
-                        payload=dict(self.current['settings'],update_repository=repository.strip())
-                        self.launch(lambda:self.client().request('/v1/settings','PUT',payload),lambda _:self.check_updates(True))
-                return
-            self.update_button.setText(('Update Windows bundle to '+release['version']) if release.get('available') else ('Windows bundle up to date · '+updates.version()['version']))
-            if release.get('available'):
-                if not interactive:
-                    if self.tray.isVisible() and self._last_notified_release!=release['version']:
-                        self._last_notified_release=release['version']
-                        self.tray.showMessage('Anki Companion update','Version '+release['version']+' is ready. Open the app and click Update.')
-                    return
-                components=updates.component_update_summary(
-                    release,remote_server=first_run.has_remote_connection(self.config))
-                text=release.get('notes','')[:1500]+'\n\nSource commit: '+release.get('commit','')
-                text+='\n\nComponent updates:\n'+components
-                if QMessageBox.question(self,'Update to '+release['version'],text+'\n\nDownload and update?')==QMessageBox.StandardButton.Yes:
-                    def ready(path):
-                        try:updates.install(path,release);self.quit_app()
-                        except ValueError as exc:self.status.setText(str(exc)+' Downloaded to '+str(path))
-                    self.status.setText('Downloading and verifying update…')
-                    self.launch(lambda:updates.download(None,release,self.storage/'updates'),ready)
-            elif interactive:self.status.setText(release.get('message','No newer release'))
-        self.launch(lambda:updates.github_release(platform),received)
+        """Launch the actual Electron updater; never download installers in Python."""
+        if not interactive:return
+        if not getattr(sys,'frozen',False):
+            self.update_status.setText('Windows updates run from the installed Electron/NSIS build.')
+            QMessageBox.information(self,'Updates','Build and install the Windows package to test updates.')
+            return
+        # PyInstaller payload lives under <installation>/resources/desktop/.
+        # The sibling Electron shell is the parent NSIS-managed executable.
+        launcher=Path(sys.executable).resolve().parents[2]/'AnkiCompanion.exe'
+        if not launcher.is_file():
+            self.update_status.setText('Windows updater is missing from this installation.')
+            QMessageBox.warning(self,'Updater not installed',
+                'This older installation does not contain the Electron updater. '
+                'Install the latest Windows release over your existing installation once. '
+                'Your study history is stored separately and is not deleted.')
+            return
+        try:
+            self.update_status.setText('Opening Windows updater…')
+            subprocess.Popen([str(launcher),'--updates'],cwd=str(launcher.parent),close_fds=True)
+            # Transfer control to Electron, which stays open during download and
+            # invokes the NSIS installer; no Python network or shell scripts.
+            self.quit_app()
+        except OSError as exc:
+            self.update_status.setText('Could not open Windows updater: '+str(exc))
+            QMessageBox.warning(self,'Updater failed',str(exc))
+
     def restore(self):self.dock.hide();self.showNormal();self.raise_();self.activateWindow()
     def closeEvent(self,event):
         if self.quitting:event.accept();return

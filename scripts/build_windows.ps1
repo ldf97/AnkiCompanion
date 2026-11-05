@@ -19,8 +19,25 @@ python -m PyInstaller @common --name AnkiCompanion --windowed installer/desktop_
 if ($LASTEXITCODE -ne 0) { throw 'Desktop packaging failed' }
 python -m PyInstaller @common --name AnkiCompanionServer --collect-all uvicorn --collect-all firebase_admin installer/server_entry.py
 if ($LASTEXITCODE -ne 0) { throw 'Server packaging failed' }
-$compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-if (-not (Test-Path $compiler)) { throw 'Install Inno Setup 6 before building the installer.' }
 $version=(Get-Content VERSION.json | ConvertFrom-Json).version
+# Production updater follows Vortex: electron-updater + NSIS + latest.yml.
+# Keep the old Inno test build available until the new installed-upgrade test passes.
+if ($env:ANKI_COMPANION_ELECTRON_BUILD -eq '1') {
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw 'Node.js is required on GitHub Windows build runner' }
+    node updater/stamp-version.cjs $version
+    if ($LASTEXITCODE -ne 0) { throw 'Could not stamp Electron app version' }
+    Push-Location updater
+    try {
+        npm install --no-audit --no-fund
+        if ($LASTEXITCODE -ne 0) { throw 'Electron dependencies failed to install' }
+        npm run dist
+        if ($LASTEXITCODE -ne 0) { throw 'NSIS package build failed' }
+    } finally { Pop-Location }
+    if (-not (Test-Path packages/latest.yml)) { throw 'electron-builder did not produce latest.yml' }
+    if (-not (Test-Path packages/AnkiCompanion-Windows-Setup.exe)) { throw 'Electron NSIS installer missing' }
+    exit 0
+}
+$compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+if (-not (Test-Path $compiler)) { throw 'Install Inno Setup 6 before building the legacy CI installer.' }
 & $compiler "/DAppVersion=$version" installer/AnkiCompanion.iss
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }

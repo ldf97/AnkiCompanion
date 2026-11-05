@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
+<title>AnkiCompanion Updates</title>
+<style>
+body {font:15px system-ui, sans-serif; background:#16191f; color:#eee6db; margin:28px}
+h1 {font-size:23px;margin:0 0 8px}
+p {line-height:1.55;min-height:58px;color:#c4c5cc}
+button {background:#ef944a;color:#1d140c;border:0;padding:12px 16px;border-radius:7px;font-weight:bold;cursor:pointer}
+button:disabled {opacity:.45;cursor:default}
+button.secondary {background:#30353d;color:#eee6db}
+#actions {display:flex;gap:10px;flex-wrap:wrap}
+progress {width:100%;height:15px;margin:12px 0 22px}
+#version {color:#9da4b0;font-size:13px}
+</style></head>
+<body>
+<h1>Application updates</h1><div id="version"></div>
+<p id="message" role="status">Checking GitHub Releases…</p>
+<progress id="progress" max="100" value="0"></progress>
+<div id="actions">
+<button id="check">Check again</button><button id="download" hidden>Download update</button>
+<button id="install" hidden>Install and restart</button><button id="open" class="secondary">Open app</button>
+</div>
+<script>
+const api=window.companionUpdater;
+const message=document.getElementById('message');
+const progress=document.getElementById('progress');
+const version=document.getElementById('version');
+const check=document.getElementById('check');
+const download=document.getElementById('download');
+const install=document.getElementById('install');
+function render(s) {
+  if(!s)return;
+  message.textContent=s.message||'';
+  version.textContent='Installed version: '+s.version+(s.targetVersion?' · Available: '+s.targetVersion:'');
+  progress.value=Number.isFinite(s.percent)?s.percent:0;
+  progress.hidden=s.stage!=='downloading'&&s.stage!=='downloaded';
+  check.disabled=['checking','downloading','installing'].includes(s.stage);
+  download.hidden=s.stage!=='available';
+  install.hidden=s.stage!=='downloaded';
+}
+api.subscribe(render);
+api.state().then(render);
+check.addEventListener('click',()=>api.check());
+download.addEventListener('click',()=>api.download());
+install.addEventListener('click',()=>api.install());
+document.getElementById('open').addEventListener('click',()=>api.openApp());
+</script>
+</body></html>

@@ -45,6 +45,8 @@ android {
 }
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
+    // Mihon uses OkHttp for reliable APK transfer; leave installation to Android.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.caverock:androidsvg-aar:1.4")
     implementation(platform("com.google.firebase:firebase-bom:35.0.2"))
     implementation("com.google.firebase:firebase-messaging")
