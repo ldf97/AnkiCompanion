@@ -66,23 +66,20 @@ def component_update_summary(release,remote_server=False):
     return '\n'.join(lines)
 
 
-def download(client,release,directory):
+def download(release,directory):
     if not release.get('available'):raise ValueError('No update is available')
     name=release['filename']
     if Path(name).name!=name or not name.lower().endswith(('.exe','.zip')):raise ValueError('Invalid update filename')
     dest=Path(directory)/name;dest.parent.mkdir(parents=True,exist_ok=True);temp=dest.with_suffix('.partial')
-    if 'download_url' in release:
-        url=release['download_url']
-        if not url.startswith(PUBLIC_RELEASES):raise ValueError('Untrusted update URL')
-        request=urllib.request.Request(url,headers={'User-Agent':'AnkiCompanion/1.0'})
-        opener=urllib.request.build_opener()
-    else:
-        request=urllib.request.Request(client.url+release['download_path'],headers={'Authorization':'Bearer '+client.token})
-        opener=client.opener
+    # Public GitHub release assets only; no local-server or pairing dependency.
+    url=release['download_url']
+    if not url.startswith(PUBLIC_RELEASES):raise ValueError('Untrusted update URL')
+    request=urllib.request.Request(url,headers={'User-Agent':'AnkiCompanion/1.0'})
+    opener=urllib.request.build_opener()
     digest=hashlib.sha256();size=0
     try:
         with opener.open(request,timeout=60) as source,temp.open('wb') as target:
-            if 'download_url' in release and not source.geturl().startswith('https://'):
+            if not source.geturl().startswith('https://'):
                 raise ValueError('Insecure update redirect')
             while chunk:=source.read(1024*1024):
                 size+=len(chunk)
