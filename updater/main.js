@@ -1,7 +1,7 @@
 'use strict';
 const {app, BrowserWindow, ipcMain} = require('electron');
 const {autoUpdater} = require('electron-updater');
-const {spawn} = require('node:child_process');
+const {spawn, spawnSync} = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -107,15 +107,54 @@ async function downloadUpdate() {
   } finally {busy = false;}
   return state;
 }
-function installUpdate() {
-  if (state.stage !== 'downloaded' || !app.isPackaged) return state;
-  publish('installing','Starting Windows installer…');
+function beforeInstallBackup() {
+  const executable = path.join(process.resourcesPath,'server','AnkiCompanionServer.exe');
+  if (!fs.existsSync(executable)) throw new Error('Bundled backup helper is missing.');
+  // The packaged Python server provides a backup-only mode, not an updater.
+  const result = spawnSync(executable, ['--backup-before-update'], {
+    windowsHide:true, timeout:60000, encoding:'utf8'
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error('Study-data backup failed. Installation stopped. '+
+      (result.error?.message || result.stderr || 'exit status '+result.status));
+  }
+}
+async function stopLocalServer() {
+  const file = path.join(process.env.LOCALAPPDATA || app.getPath('userData'),
+    'AnkiCompanion','server','token.txt');
+  if (!fs.existsSync(file)) return;
+  const token = fs.readFileSync(file,'utf8').trim();
+  if (token.length < 16) throw new Error('Invalid local server token');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(),3000);
   try {
-    // Actual native NSIS installer entrypoint used by Vortex.
+    const response = await fetch('http://127.0.0.1:8766/v1/local-updater/shutdown',{
+      method:'POST', headers:{Authorization:'Bearer '+token},
+      signal:controller.signal
+    });
+    if (!response.ok && response.status !== 404) {
+      throw new Error('Local server declined shutdown: HTTP '+response.status);
+    }
+    if (response.ok) await new Promise(resolve=>setTimeout(resolve,700));
+  } catch(error) {
+    // Offline servers should never prevent the updater. The packaged NSIS
+    // payload lives in its own resources dir during initial Inno migration.
+    if (!['AbortError','TypeError'].includes(error?.name)) throw error;
+  } finally {clearTimeout(timeout);}
+}
+async function installUpdate() {
+  if (state.stage !== 'downloaded' || !app.isPackaged) return state;
+  busy = true;
+  publish('installing','Preserving existing study history…');
+  try {
+    beforeInstallBackup();
+    await stopLocalServer();
+    publish('installing','Starting verified NSIS installer…');
+    // Vortex delegates install to the same electron-updater native API.
     autoUpdater.quitAndInstall(false,true);
   } catch (error) {
-    publish('error','Windows installation failed: '+error.message);
-  }
+    publish('error','Update installation was stopped safely: '+error.message);
+  } finally {busy = false;}
   return state;
 }
 ipcMain.handle('updates:state', () => state);
