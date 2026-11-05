@@ -1,7 +1,7 @@
 {
   "name": "pong-update-lab",
   "productName": "Pong Update Lab",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "main": "main.js",
   "description": "Standalone Pong app with Vortex-style Electron auto updater",
@@ -28,7 +28,8 @@
       "main.js",
       "preload.js",
       "index.html",
-      "package.json"
+      "package.json",
+      "death-sound.webm"
     ],
     "win": {
       "target": [
