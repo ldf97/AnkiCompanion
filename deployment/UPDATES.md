@@ -1,11 +1,54 @@
-# Update channel
+# Direct GitHub application updates
 
-The server checks `ldf97/AnkiCompanion` stable GitHub Releases. Each release must have `update.json`, an exact source commit, a numeric version/build, filenames, byte lengths and SHA-256 hashes. Android checks hourly during successful background/foreground refresh; desktop checks on launch and every 15 minutes. Both expose an Update button. Offline or sleeping devices catch up when the OS next permits network work; continuous background delivery is not guaranteed by Android.
+Both operating systems update from public GitHub Releases in this existing repository. No
+additional updater service, account, Google Play listing, Microsoft Store listing, or
+owner-operated PowerShell command is needed. Updating the source branch alone does
+not update installed applications: GitHub must have a newer published release.
 
-Downloads reject redirects outside the approved GitHub asset hosts and strip the API credential when changing host. Clients authenticate to the companion server. Android checks package ID, increasing version code and the installed signing certificate before asking the OS to install. Windows checks Authenticode trust plus the publisher thumbprint embedded at build time before executing the installer. A development build without a publisher pin cannot silently install an update.
+## Windows
 
-`release-candidate.yml` builds signed candidates only when manually started on main. Configure the `signing` environment with a persistent Android keystore and a trusted Windows code-signing certificate. Required secrets are named in that workflow. Keep private key backups outside the repository. Never replace the key between releases. The workflow fails if signing material is absent and **does not publish a release**. It has not been run with production credentials in this workspace.
+- The PySide6 **App updates** button checks
+  `https://github.com/ldf97/AnkiCompanion/releases/latest/download/update.json`
+  independently of the local study server, pairing token, and port 8766.
+- It compares the installed version, downloads the Windows Inno Setup executable
+  from the same GitHub release, enforces its declared byte count and SHA-256,
+  and verifies it again before starting the ordinary Windows installer.
+- The installer replaces the bundled desktop program, local server and packaged
+  Anki bridge, while keeping the local study database and pairing token outside
+  the program directory. A verified backup is taken before installation.
+- An optional Windows Authenticode publisher pin is enforced if that build has
+  configured one. Buying/configuring a signing certificate is **not required**
+  for the SHA-256-verified GitHub-release update path. The optional check currently
+  uses PowerShell internally; users never have to run a command.
+- The update button has its own persistent status and a visible error dialog.
+  Local study-server connection failures cannot hide its check/download errors.
 
-After physical-device acceptance and explicit owner authorization, publish the exact candidate assets plus `update.json` in a stable GitHub Release tagged `vVERSION`. The app updater then detects that release. Changing code on main by itself is not an installable update.
+## Android
 
-CI development artifacts are unsigned on Windows and debug-signed on Android. GitHub runner debug keys may differ between runs and from the previously supplied APK. Do not uninstall an existing app just to bypass a signature mismatch: preserve its data/settings and use the original signing key or a planned migration. Production in-place update installation remains unverified until the persistent keys and actual devices are available.
+- Both the Android Companion and the separately packaged AnkiDroid Companion
+  fetch the same public GitHub release manifest. No paired Windows server is
+  involved in application updates.
+- APK downloads are checked for size, SHA-256, Android package identity,
+  increasing version code, and compatible installed signing identity before
+  passing the APK to Android's own package installer.
+- Android requires the user to approve app installation from this source once
+  (if not already allowed) and confirm installation. The app resumes a verified
+  downloaded APK after that permission is granted.
+- Android's security model **requires** an existing package's release signing
+  identity to remain compatible across updates. This is not a paid service or
+  an optional permission we can bypass; the existing CI release key must
+  remain stable. A debug APK signed with a different key cannot overwrite
+  the user's release APK without migration.
+
+## Publishing and verification
+
+The existing GitHub Actions build/release workflow packages Windows and both
+Android APKs, along with a shared `update.json`. CI verifies packaging and
+checks upgrade behavior on disposable Windows/Android environments. Production
+signing material, where required, remains in existing GitHub secrets rather
+than in the app or source repository.
+
+A published update must have its installer/APKs and matching manifest; installing
+onto an existing device is the final acceptance test. Never uninstall the
+existing app to get around a signing error: preserve the study database,
+native Anki review history, and private skins.
