@@ -72,8 +72,8 @@ def download(release,directory):
     if Path(name).name!=name or not name.lower().endswith(('.exe','.zip')):raise ValueError('Invalid update filename')
     dest=Path(directory)/name;dest.parent.mkdir(parents=True,exist_ok=True);temp=dest.with_suffix('.partial')
     # Public GitHub release assets only; no local-server or pairing dependency.
-    url=release['download_url']
-    if not url.startswith(PUBLIC_RELEASES):raise ValueError('Untrusted update URL')
+    url=release.get('download_url')
+    if not isinstance(url,str) or not url.startswith(PUBLIC_RELEASES):raise ValueError('Untrusted update URL')
     request=urllib.request.Request(url,headers={'User-Agent':'AnkiCompanion/1.0'})
     opener=urllib.request.build_opener()
     digest=hashlib.sha256();size=0
