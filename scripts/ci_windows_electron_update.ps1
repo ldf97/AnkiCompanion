@@ -13,8 +13,23 @@ if (-not $metadata.Contains('AnkiCompanion-Windows-Setup.exe')) { throw 'Electro
 if (-not (Test-Path 'packages/AnkiCompanion-Windows-Setup.exe.blockmap')) { throw 'Differential-download blockmap missing' }
 $installed=Start-Process $installer -ArgumentList '/S' -Wait -PassThru
 if ($installed.ExitCode -ne 0) { throw "Electron NSIS installation failed: $($installed.ExitCode)" }
-$root=Join-Path $env:LOCALAPPDATA 'Programs/AnkiCompanion'
-$launcher=Join-Path $root 'AnkiCompanion.exe'
+# Electron's per-user NSIS target determines its own install directory.
+# Discover the real installed launcher instead of assuming Inno's old path.
+$programs=Join-Path $env:LOCALAPPDATA 'Programs'
+$launcher=$null
+for ($attempt=0; $attempt -lt 40 -and -not $launcher; $attempt++) {
+  $matches=@(Get-ChildItem $programs -Filter AnkiCompanion.exe -File -Recurse -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -notmatch '[\\/]resources[\\/]' })
+  if ($matches.Count -gt 0) { $launcher=$matches[0].FullName; break }
+  Start-Sleep -Seconds 1
+}
+if (-not $launcher) {
+  Write-Host 'NSIS per-user program directories:'
+  Get-ChildItem $programs -Directory -ErrorAction SilentlyContinue | Select-Object FullName | Format-Table
+  throw 'NSIS installer returned success but did not create a launcher'
+}
+$root=Split-Path $launcher -Parent
+Write-Host "Verified NSIS installed at $root"
 $qt=Join-Path $root 'resources/desktop/AnkiCompanion.exe'
 $server=Join-Path $root 'resources/server/AnkiCompanionServer.exe'
 $bridge=Join-Path $root 'resources/Anki_Companion_Bridge.ankiaddon'
