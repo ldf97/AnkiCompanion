@@ -1,0 +1,56 @@
+{
+  "name": "pong-update-lab",
+  "productName": "Pong Update Lab",
+  "version": "1.0.0",
+  "private": true,
+  "main": "main.js",
+  "description": "Standalone Pong app with Vortex-style Electron auto updater",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dist": "electron-builder --win nsis --x64 --publish never",
+    "test": "node --test test.cjs"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11"
+  },
+  "devDependencies": {
+    "electron": "44.10.2",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.ankicompanion.ponglab",
+    "productName": "Pong Update Lab",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "PongLab-Windows-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ldf97",
+        "repo": "AnkiCompanion"
+      }
+    ]
+  }
+}
