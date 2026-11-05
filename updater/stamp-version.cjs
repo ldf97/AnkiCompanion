@@ -1,0 +1,10 @@
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const version = process.argv[2];
+if (!/^\d+\.\d+\.\d+$/.test(version || '')) throw new Error('Expected numeric release version');
+const file = path.join(__dirname,'package.json');
+const pkg = JSON.parse(fs.readFileSync(file,'utf8'));
+pkg.version = version;
+fs.writeFileSync(file,JSON.stringify(pkg,null,2)+'\n','utf8');
+console.log('Electron/NSIS package version: '+version);
