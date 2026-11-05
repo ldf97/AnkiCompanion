@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; media-src 'self'">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Pong Update Lab</title>
 <style>
@@ -21,8 +21,9 @@ progress{width:100%;height:7px;display:none}
 footer{font-size:12px;color:#93a0bb;margin-top:12px}
 </style>
 </head><body>
-<header><h1>🏓 Pong Update Lab</h1><small>Version 1.0.0</small></header>
+<header><h1>🏓 Pong Update Lab</h1><small>Version 1.0.1 · HARD MODE</small></header>
 <canvas id="game" width="650" height="420" aria-label="Pong game"></canvas>
+<audio id="deathSound" src="death-sound.webm" preload="auto"></audio>
 <div id="panel">
  <div id="actions">
  <button id="check">Check for update</button>
@@ -33,38 +34,51 @@ footer{font-size:12px;color:#93a0bb;margin-top:12px}
  <p id="status" role="status">Check for updates whenever a new version is published.</p>
  <progress id="progress" max="100" value="0"></progress>
 </div>
-<footer>Move the bottom paddle with your mouse or ← →. First to 7 wins.</footer>
+<footer>HARD MODE: AI is twice as fast. First to 7 wins. Click the game to continue after a loss.</footer>
 <script>
 const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
 const W=canvas.width,H=canvas.height;
-let x=W/2,y=H/2,vx=3.8,vy=3.4,player=W/2,ai=W/2,points=0,computer=0,ended=false;
+const deathSound=document.querySelector('#deathSound');
+const PLAYER_W=100,AI_W=110,AI_SPEED=7.4;
+let x=W/2,y=H/2,vx=5.0,vy=4.3,player=W/2,ai=W/2,points=0,computer=0,ended=false,lost=false;
 const clamp=(a,l,r)=>Math.max(l,Math.min(r,a));
-function restart(){points=0;computer=0;ended=false;resetBall();}
-function resetBall(){x=W/2;y=H/2;vx=(Math.random()<.5?-1:1)*3.7;vy=(Math.random()<.5?-1:1)*3.4;}
+function restart(){points=0;computer=0;ended=false;lost=false;deathSound.pause();deathSound.currentTime=0;resetBall();}
+function resetBall(){x=W/2;y=H/2;vx=(Math.random()<.5?-1:1)*5.0;vy=(Math.random()<.5?-1:1)*4.3;}
 function frame(){
  ctx.clearRect(0,0,W,H);
  ctx.fillStyle='#19365c';ctx.fillRect(0,H/2-1,W,2);
  ctx.setLineDash([8,10]);ctx.strokeStyle='#3e5985';ctx.beginPath();ctx.moveTo(0,H/2);ctx.lineTo(W,H/2);ctx.stroke();ctx.setLineDash([]);
  ctx.fillStyle='#d6e0ff';ctx.font='bold 32px system-ui';ctx.textAlign='center';
  ctx.fillText(computer+'  :  '+points,W/2,H/2-17);
- const left=clamp(player-55,0,W-110),upper=clamp(ai-55,0,W-110);
- ctx.fillStyle='#ffae78';ctx.fillRect(upper,30,110,12);
- ctx.fillStyle='#9af2dd';ctx.fillRect(left,H-42,110,12);
+ const left=clamp(player-PLAYER_W/2,0,W-PLAYER_W),upper=clamp(ai-AI_W/2,0,W-AI_W);
+ ctx.fillStyle='#ffae78';ctx.fillRect(upper,30,AI_W,12);
+ ctx.fillStyle='#9af2dd';ctx.fillRect(left,H-42,PLAYER_W,12);
  if(!ended) {
   x+=vx;y+=vy;
   if(x<9||x>W-9)vx=-vx;
-  ai+=clamp(x-ai,-3.7,3.7);ai=clamp(ai,55,W-55);
-  if(y<49&&vy<0&&x>upper-8&&x<upper+118){vy=Math.abs(vy);vx+=(x-ai)/28;}
-  if(y>H-53&&vy>0&&x>left-8&&x<left+118){vy=-Math.abs(vy);vx+=(x-player)/25;}
-  vx=clamp(vx,-7,7);
+  ai+=clamp(x-ai,-AI_SPEED,AI_SPEED);ai=clamp(ai,AI_W/2,W-AI_W/2);
+  if(y<49&&vy<0&&x>upper-8&&x<upper+AI_W+8){vy=Math.abs(vy);vx+=(x-ai)/28;}
+  if(y>H-53&&vy>0&&x>left-8&&x<left+PLAYER_W+8){vy=-Math.abs(vy);vx+=(x-player)/25;}
+  vx=clamp(vx,-8.5,8.5);
   if(y<0){points++;resetBall();}
   if(y>H){computer++;resetBall();}
-  if(points>=7||computer>=7)ended=true;
+  if(points>=7||computer>=7){
+    ended=true;
+    lost=computer>=7;
+    if(lost){deathSound.currentTime=0;deathSound.play().catch(err=>console.error('Loss audio:',err));}
+  }
  }
  ctx.beginPath();ctx.arc(x,y,8,0,Math.PI*2);ctx.fillStyle='#fff8ee';ctx.fill();
- if(ended){ctx.fillStyle='#ffffff';ctx.font='bold 26px system-ui';ctx.fillText(points>=7?'You win!':'Computer wins!',W/2,H/2+52);}
+ if(ended){
+  ctx.fillStyle='rgba(0,0,0,0.86)';ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';ctx.font='bold 75px Georgia,serif';ctx.fillStyle=lost?'#b31b28':'#9af2dd';
+  ctx.fillText(lost?'YOU DIED':'YOU WIN',W/2,H/2+4);
+  ctx.font='20px system-ui';ctx.fillStyle='#efebed';
+  ctx.fillText('CLICK TO CONTINUE',W/2,H/2+58);
+ }
  requestAnimationFrame(frame);
 }
+canvas.addEventListener('click',()=>{if(ended)restart();});
 canvas.addEventListener('mousemove',e=>{const r=canvas.getBoundingClientRect();player=clamp((e.clientX-r.left)*W/r.width,55,W-55);});
 window.addEventListener('keydown',e=>{if(e.key==='ArrowLeft')player=clamp(player-30,55,W-55);if(e.key==='ArrowRight')player=clamp(player+30,55,W-55);});
 document.querySelector('#reset').onclick=restart;
