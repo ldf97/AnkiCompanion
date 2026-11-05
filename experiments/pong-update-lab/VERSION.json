@@ -1,0 +1,6 @@
+{
+  "version": "1.0.0",
+  "androidVersionCode": 1,
+  "channel": "pong-update-lab",
+  "androidPackage": "com.ankicompanion.ponglab"
+}
