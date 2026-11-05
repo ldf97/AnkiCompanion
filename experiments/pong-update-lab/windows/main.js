@@ -2,6 +2,8 @@
 const {app, BrowserWindow, ipcMain} = require('electron');
 const {autoUpdater} = require('electron-updater');
 const path = require('node:path');
+// Loss audio plays when the AI reaches seven, even before the first mouse click.
+app.commandLine.appendSwitch('autoplay-policy','no-user-gesture-required');
 
 // Vortex's updater pathway: generic GitHub feed -> checkForUpdates ->
 // downloadUpdate -> SHA512-checked staged NSIS -> quitAndInstall.
