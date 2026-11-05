@@ -26,10 +26,13 @@ if ($env:ANKI_COMPANION_ELECTRON_BUILD -eq '1') {
     if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw 'Node.js is required on GitHub Windows build runner' }
     node updater/stamp-version.cjs $version
     if ($LASTEXITCODE -ne 0) { throw 'Could not stamp Electron app version' }
-    npm --prefix updater install --no-audit --no-fund
-    if ($LASTEXITCODE -ne 0) { throw 'Electron dependencies failed to install' }
-    npm --prefix updater run dist
-    if ($LASTEXITCODE -ne 0) { throw 'NSIS package build failed' }
+    Push-Location updater
+    try {
+        npm install --no-audit --no-fund
+        if ($LASTEXITCODE -ne 0) { throw 'Electron dependencies failed to install' }
+        npm run dist
+        if ($LASTEXITCODE -ne 0) { throw 'NSIS package build failed' }
+    } finally { Pop-Location }
     if (-not (Test-Path packages/latest.yml)) { throw 'electron-builder did not produce latest.yml' }
     if (-not (Test-Path packages/AnkiCompanion-Windows-Setup.exe)) { throw 'Electron NSIS installer missing' }
     exit 0
