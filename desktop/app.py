@@ -463,7 +463,7 @@ class Window(QMainWindow):
                 except Exception as exc:
                     download_failed(str(exc))
 
-            self.launch(lambda:updates.download(None,release,self.storage/'updates'),
+            self.launch(lambda:updates.download(release,self.storage/'updates'),
                         ready,error=download_failed)
 
         self.launch(lambda:updates.github_release(platform),received,error=failed)
