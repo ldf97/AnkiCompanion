@@ -96,3 +96,16 @@ def test_encrypted_android_migration_includes_original_private_skin_bytes():
     assert 'Private skin checksum mismatch' in source
     assert 'Recovery would overwrite a different original private skin' in source
     assert 'encryptedRecoveryContainsOriginalPrivateSkinAndRestoresExactBytes' in instrument
+
+def test_android_updates_use_public_github_without_pairing_and_keep_feedback_visible():
+    updates=(ROOT/'android/app/src/main/java/org/ankicompanion/app/Updates.kt').read_text()
+    main=(ROOT/'android/app/src/main/java/org/ankicompanion/app/MainActivity.kt').read_text()
+    sync=(ROOT/'android/app/src/main/java/org/ankicompanion/app/Sync.kt').read_text()
+    assert 'fun check(context:Context,force:Boolean=false)' in updates
+    assert 'fun download(context:Context,release:JSONObject)' in updates
+    assert 'Legacy update needs a paired server' not in updates
+    assert 'https://github.com/ldf97/AnkiCompanion/releases/latest/download/' in updates
+    assert 'Updates.check(context)' in sync
+    assert 'private lateinit var updateStatus:TextView' in main
+    assert 'onError={e->updateStatus.text="Update check failed:' in main
+    assert 'onError={e->updateStatus.text="Update download failed:' in main
