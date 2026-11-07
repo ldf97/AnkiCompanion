@@ -2,6 +2,8 @@ package org.ankicompanion.app
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
@@ -19,6 +21,10 @@ class MainActivity:Activity() {
         // Update downloads must never queue behind a stalled native Anki sync.
         private val updateExecutor=java.util.concurrent.Executors.newSingleThreadExecutor { task ->
             Thread(task,"AnkiCompanion-Updates").apply { isDaemon=true }
+        }
+        // Diagnostics must run even if native Anki sync has blocked Sync.executor.
+        private val diagnosticsExecutor=java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+            Thread(task,"AnkiCompanion-Diagnostics").apply { isDaemon=true }
         }
     }
     private lateinit var storage:Storage
@@ -61,6 +67,7 @@ class MainActivity:Activity() {
         box.addView(button("Save deck settings"){saveDeck()})
         box.addView(button("Study next subdeck"){study()}.apply{setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(238,145,71)));setTextColor(Color.rgb(23,18,14))})
         val actions=LinearLayout(this);actions.addView(button("Anki access"){requestAnki()});actions.addView(button("Refresh"){refresh()});actions.addView(button("Sync AnkiDroid"){try{AnkiBridge.nativeSync(this)}catch(e:Exception){status.text=e.message}});box.addView(actions)
+        box.addView(button("Test connection & copy logs"){connectionDiagnostics()})
         val settings=LinearLayout(this);settings.addView(button("Lesson & day"){goals()});settings.addView(button("Skins"){skins()});box.addView(settings)
         updateButton=button("App updates · "+BuildConfig.VERSION_NAME){updates()};box.addView(updateButton)
         ankidroidUpdateButton=button("AnkiDroid Companion updates"){ankidroidUpdates()};box.addView(ankidroidUpdateButton)
@@ -110,17 +117,29 @@ class MainActivity:Activity() {
         }
     }
     private fun refresh() {
-        if(busy || storage.connection()==null)return
+        if(busy){status.text="Synchronization already running; use Test connection & copy logs for independent diagnostics";return}
+        if(storage.connection()==null)return
         busy=true
         Sync.executor.execute {
-            val value=try{Sync.run(applicationContext)}catch(e:Exception){null}
-            runOnUiThread{busy=false;if(value!=null && !isFinishing){show(value);Commands.handle(this,api());if(pendingStudy){pendingStudy=false;study()}}}
+            val value=try{Sync.run(applicationContext)}catch(e:Exception){
+                storage.setSetting("sync_error",e.message ?: e.javaClass.simpleName)
+                SyncTrace.record(storage,"refresh_exception",e.javaClass.simpleName+": "+(e.message ?: ""))
+                null
+            }
+            runOnUiThread {
+                busy=false
+                if(!isFinishing) {
+                    if(value!=null){show(value);Commands.handle(this,api());if(pendingStudy){pendingStudy=false;study()}}
+                    else status.text="Could not synchronize: "+SyncTrace.redact(storage.getSetting("sync_error","No fresh response"),storage.connection())
+                }
+            }
         }
     }
     private fun show(value:JSONObject) {
         val first=state==null;state=value
         val error=storage.getSetting("sync_error")
         status.text=if(error.isEmpty())"Connected · "+value.getString("date") else "Offline · cached progress · "+value.getString("date")
+        if(error.isNotEmpty())status.append(" · Error: "+SyncTrace.redact(error,storage.connection()).take(160))
         status.append(" · updated ${((System.currentTimeMillis()-value.getLong("server_time_ms"))/1000).coerceAtLeast(0)}s ago")
         val localPending=value.optInt("locally_pending",0)
         value.optString("shared_revision").takeIf{it.length>=8}?.let {status.append(" · confirmed state "+it.take(8))}
@@ -199,6 +218,31 @@ class MainActivity:Activity() {
                 refresh()
             }catch(e:Exception){status.text=e.message}
         }.show()
+    }
+    private fun connectionDiagnostics() {
+        status.text="Testing server connection and collecting Android sync logs…"
+        diagnosticsExecutor.execute {
+            val report=try{Diagnostics.collect(applicationContext)}
+                catch(e:Exception){"Anki Companion Diagnostics\\nDiagnostic runner failed: "+
+                    e.javaClass.simpleName+": "+SyncTrace.redact(e.message ?: "Unknown error",storage.connection())}
+            runOnUiThread {
+                if(isFinishing)return@runOnUiThread
+                try {
+                    val clipboard=getSystemService(ClipboardManager::class.java)
+                    val previous=clipboard.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+                    // Append only to a previous diagnostic report, never copy unrelated clipboard secrets.
+                    val output=if(previous.startsWith("Anki Companion Diagnostics") && previous.length<100000)
+                        previous+"\\n\\n"+report else report
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Anki Companion Diagnostics",output))
+                    status.text="Connection test finished · diagnostics copied to clipboard"
+                    Toast.makeText(this,"Diagnostics copied · paste into ChatGPT",Toast.LENGTH_LONG).show()
+                }catch(e:Exception) {
+                    status.text="Clipboard failed: "+(e.message ?: e.javaClass.simpleName)
+                    AlertDialog.Builder(this).setTitle("Connection diagnostics")
+                        .setMessage(report).setPositiveButton("OK",null).show()
+                }
+            }
+        }
     }
     private fun requestAnki() {
         try{requestPermissions(arrayOf(AnkiBridge.permission(this)),2)}
