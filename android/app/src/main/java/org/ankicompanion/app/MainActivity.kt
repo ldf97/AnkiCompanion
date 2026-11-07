@@ -41,6 +41,8 @@ class MainActivity:Activity() {
     private var decks=listOf<JSONObject>()
     private var renderedKey=""
     private var busy=false
+    private var checkingAppUpdate=false
+    private var checkingAnkiDroidUpdate=false
     private var resumed=false
     private var pendingStudy=false
     private var recoveryPassphrase:String?=null
@@ -186,9 +188,10 @@ class MainActivity:Activity() {
             val index=decks.indexOfFirst{it.getString("id")==value.getJSONObject("settings").getString("parent_deck_id")};if(index>=0)parent.setSelection(index)
         } else decks=latest
         if(first)mode.setSelection(if(value.getJSONObject("settings").getString("clearance")=="new_only")0 else 1)
-        val update=storage.load("update.json");updateButton.text=if(update?.optBoolean("available")==true)"Update Android Companion to "+update.optString("version") else "Android Companion updates · "+BuildConfig.VERSION_NAME
+        val update=storage.load("update.json")
+        if(!checkingAppUpdate)updateButton.text=if(update?.optBoolean("available")==true)"Update Android Companion to "+update.optString("version") else "Android Companion updates · "+BuildConfig.VERSION_NAME
         val ankidroidUpdate=storage.load("ankidroid-update.json")
-        ankidroidUpdateButton.text=if(ankidroidUpdate?.optBoolean("available")==true)
+        if(!checkingAnkiDroidUpdate)ankidroidUpdateButton.text=if(ankidroidUpdate?.optBoolean("available")==true)
             "Update AnkiDroid Companion to "+ankidroidUpdate.optString("version")
             else "AnkiDroid Companion updates · check separately"
     }
@@ -347,12 +350,49 @@ class MainActivity:Activity() {
         val message="Phone AnkiCompanion signer:\n$companion\n\nAnkiDroid Companion signer:\n$ankidroid\n\nStable release signer:\n$stable\n\nAn update can preserve app data only when Android accepts its signing identity."
         AlertDialog.Builder(this).setTitle("Update compatibility").setMessage(message).setPositiveButton("OK",null).show()
     }
+    private fun updateErrorDialog(message:String) {
+        AlertDialog.Builder(this).setTitle("Update check failed")
+            .setMessage(message+"\\n\\nYou can download the production-signed APK directly from the official GitHub Releases page without uninstalling the current app.")
+            .setNegativeButton("Close",null)
+            .setPositiveButton("Open GitHub Releases"){_,_->
+                startActivity(Intent(Intent.ACTION_VIEW,android.net.Uri.parse(
+                    "https://github.com/ldf97/AnkiCompanion/releases/latest")))
+            }.show()
+    }
+    private fun updateNotice(title:String,message:String) {
+        AlertDialog.Builder(this).setTitle(title).setMessage(message)
+            .setPositiveButton("OK",null).show()
+    }
     private fun ankidroidUpdates() {
+        if(checkingAnkiDroidUpdate)return
+        checkingAnkiDroidUpdate=true
+        ankidroidUpdateButton.isEnabled=false
+        ankidroidUpdateButton.text="Checking AnkiDroid Companion updates…"
         updateStatus.text="Checking GitHub for AnkiDroid Companion updates…"
+        Toast.makeText(this,"Checking signed AnkiDroid releases…",Toast.LENGTH_SHORT).show()
         async({Updates.checkAnkiDroid(applicationContext,true)},updateExecutor,
-            onError={e->updateStatus.text="Update check failed: "+(e.message ?: "Network error")}){result->
-            val release=result as? JSONObject ?: return@async
-            if(!release.optBoolean("available")){updateStatus.text=release.optString("message","No newer release");return@async}
+            onError={e->
+                checkingAnkiDroidUpdate=false
+                ankidroidUpdateButton.isEnabled=true
+                ankidroidUpdateButton.text="AnkiDroid Companion updates · retry"
+                updateStatus.text="Update check failed: "+(e.message ?: "Network error")
+                updateErrorDialog(e.message ?: "Network error")
+            }){result->
+            checkingAnkiDroidUpdate=false
+            ankidroidUpdateButton.isEnabled=true
+            val release=result as? JSONObject
+            if(release==null) {
+                ankidroidUpdateButton.text="AnkiDroid Companion updates · retry"
+                updateErrorDialog("GitHub returned no update result")
+                return@async
+            }
+            if(!release.optBoolean("available")){
+                ankidroidUpdateButton.text="AnkiDroid Companion updates · check separately"
+                updateStatus.text=release.optString("message","No newer release")
+                updateNotice("AnkiDroid Companion updates",updateStatus.text.toString())
+                return@async
+            }
+            ankidroidUpdateButton.text="Update AnkiDroid Companion to "+release.optString("version")
             val installed=Updates.signingFingerprint(this,"com.ichi2.anki.companion")!="Not installed"
             AlertDialog.Builder(this).setTitle(if(installed)"Update AnkiDroid Companion" else "Install AnkiDroid Companion")
                 .setMessage("Use the production-signed ${release.optString("version")} package. Review data stays in AnkiDroid and native AnkiWeb sync.")
@@ -379,11 +419,35 @@ class MainActivity:Activity() {
     }
 
     private fun updates() {
+        if(checkingAppUpdate)return
+        checkingAppUpdate=true
+        updateButton.isEnabled=false
+        updateButton.text="Checking GitHub updates…"
         updateStatus.text="Checking GitHub for Android Companion updates…"
+        Toast.makeText(this,"Checking signed Anki Companion release…",Toast.LENGTH_SHORT).show()
         async({Updates.check(applicationContext,true)},updateExecutor,
-            onError={e->updateStatus.text="Update check failed: "+(e.message ?: "Network error")}){result->
-            val release=result as? JSONObject ?: return@async
-            if(!release.optBoolean("available")){updateStatus.text=release.optString("message","No newer release");return@async}
+            onError={e->
+                checkingAppUpdate=false
+                updateButton.isEnabled=true
+                updateButton.text="Android Companion updates · retry"
+                updateStatus.text="Update check failed: "+(e.message ?: "Network error")
+                updateErrorDialog(e.message ?: "Network error")
+            }){result->
+            checkingAppUpdate=false
+            updateButton.isEnabled=true
+            val release=result as? JSONObject
+            if(release==null) {
+                updateButton.text="Android Companion updates · retry"
+                updateErrorDialog("GitHub returned no update result")
+                return@async
+            }
+            if(!release.optBoolean("available")){
+                updateButton.text="Android Companion updates · "+BuildConfig.VERSION_NAME
+                updateStatus.text=release.optString("message","No newer release")
+                updateNotice("Android Companion updates",updateStatus.text.toString())
+                return@async
+            }
+            updateButton.text="Update Android Companion to "+release.optString("version")
             AlertDialog.Builder(this).setTitle("Update to "+release.getString("version")).setMessage(release.optString("notes")+"\nSource commit: "+release.optString("commit")).setNegativeButton("Later",null).setPositiveButton("Update"){_,_->
                 updateStatus.text="Downloading and verifying Android Companion…"
                 async({Updates.download(applicationContext,release){ percent ->

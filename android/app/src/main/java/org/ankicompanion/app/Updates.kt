@@ -44,6 +44,9 @@ object Updates {
         .readTimeout(60,TimeUnit.SECONDS)
         .followRedirects(true)
         .build()
+    // Bound release lookup even if DNS, TLS or redirects stall.
+    // APK downloads continue to use the streaming client above.
+    private val releaseLookupHttp=http.newBuilder().callTimeout(30,TimeUnit.SECONDS).build()
     fun check(context:Context,force:Boolean=false):JSONObject? {
         val store=Storage(context);val cached=store.load("update.json")
         if(!force && cached!=null && System.currentTimeMillis()-cached.optLong("checked_ms")<60*60*1000)return cached
@@ -91,7 +94,7 @@ object Updates {
         val source=UpdateAcceptanceTransport.emulatorUrl(UpdateAcceptanceTransport.manifestUrl)
             ?: "https://github.com/ldf97/AnkiCompanion/releases/latest/download/update.json"
         val request=Request.Builder().url(source).header("Accept","application/json").build()
-        val data=http.newCall(request).execute().use { response ->
+        val data=releaseLookupHttp.newCall(request).execute().use { response ->
             require(response.isSuccessful){"GitHub release check failed: HTTP ${response.code}"}
             val body=response.body ?: error("GitHub release has no manifest")
             body.byteStream().use { input ->
