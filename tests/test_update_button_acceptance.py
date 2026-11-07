@@ -38,15 +38,30 @@ def test_unpaired_update_button_opens_electron_without_server(monkeypatch,tmp_pa
     shell=root/"AnkiCompanion.exe"
     shell.write_bytes(b"fixture, not executable")
     calls=[]
+    scheduled=[]
+    nonce="a"*32
+    from types import SimpleNamespace
     monkeypatch.setattr(desktop_app.sys,"frozen",True,raising=False)
     monkeypatch.setattr(desktop_app.sys,"executable",str(child))
     monkeypatch.setattr(desktop_app.subprocess,"Popen",
                         lambda argv,**kwargs:calls.append(list(argv)))
+    monkeypatch.setattr(desktop_app.uuid,"uuid4",lambda:SimpleNamespace(hex=nonce))
+    monkeypatch.setattr(desktop_app.tempfile,"gettempdir",lambda:str(tmp_path))
+    monkeypatch.setattr(desktop_app,"QTimer",SimpleNamespace(
+        singleShot=lambda delay,callback:scheduled.append(callback)))
     window.quit_app=lambda:calls.append("gui_quit")
     try:
         QTest.mouseClick(window.update_button,Qt.MouseButton.LeftButton)
-        assert calls==[[str(shell),"--updates"],"gui_quit"],calls
+        assert calls==[[str(shell),"--updates",f"--updates-request={nonce}"]],calls
         assert "Opening Windows updater" in window.update_status.text()
+        assert not window.update_button.isEnabled()
+        assert scheduled
+        assert "gui_quit" not in calls  # No premature shutdown.
+        marker=tmp_path/f"ankicompanion-updates-{nonce}.ready"
+        marker.write_text("ready",encoding="utf-8")
+        scheduled.pop(0)()
+        assert calls[-1]=="gui_quit"
+        assert not marker.exists()
         assert not window.config.get("token")
     finally: close_window(window)
 

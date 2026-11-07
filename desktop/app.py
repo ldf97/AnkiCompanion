@@ -1,4 +1,4 @@
-import sys, os, json, time, tempfile, math, threading, subprocess
+import sys, os, json, time, tempfile, math, threading, subprocess, uuid
 from pathlib import Path
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QStandardPaths, QSize
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QImage, QAction
@@ -419,12 +419,39 @@ class Window(QMainWindow):
                 'Your study history is stored separately and is not deleted.')
             return
         try:
+            # Confirm that the updater window is actually ready BEFORE closing
+            # this GUI. Immediate self.quit_app() raced the Electron
+            # second-instance event and killed its parent on some devices.
+            request=uuid.uuid4().hex
+            marker=Path(tempfile.gettempdir())/f'ankicompanion-updates-{request}.ready'
+            marker.unlink(missing_ok=True)
             self.update_status.setText('Opening Windows updater…')
-            subprocess.Popen([str(launcher),'--updates'],cwd=str(launcher.parent),close_fds=True)
-            # Transfer control to Electron, which stays open during download and
-            # invokes the NSIS installer; no Python network or shell scripts.
-            self.quit_app()
+            self.update_button.setEnabled(False)
+            subprocess.Popen([str(launcher),'--updates',f'--updates-request={request}'],
+                             cwd=str(launcher.parent),close_fds=True)
+            started=time.monotonic()
+            def confirm():
+                if self.quitting:return
+                if marker.is_file():
+                    try: acknowledged=marker.read_text(encoding='utf-8')=='ready'
+                    except OSError: acknowledged=False
+                    if acknowledged:
+                        marker.unlink(missing_ok=True)
+                        self.update_status.setText('Windows updater opened.')
+                        self.quit_app()
+                        return
+                if time.monotonic()-started>15:
+                    self.update_button.setEnabled(True)
+                    self.update_status.setText('Updater did not confirm opening. Study app remains open.')
+                    QMessageBox.warning(self,'Updater failed to open',
+                        'The Windows updater did not confirm its window opened. '
+                        'The study app remains running and your data is unchanged. '
+                        'Install the latest Windows release over the current version from GitHub Releases.')
+                    return
+                QTimer.singleShot(200,confirm)
+            QTimer.singleShot(200,confirm)
         except OSError as exc:
+            self.update_button.setEnabled(True)
             self.update_status.setText('Could not open Windows updater: '+str(exc))
             QMessageBox.warning(self,'Updater failed',str(exc))
 
