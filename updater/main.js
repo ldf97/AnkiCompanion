@@ -22,7 +22,7 @@ function logUpdate(stage, message) {
       fs.renameSync(file, file + '.previous');
     }
     fs.appendFileSync(file, new Date().toISOString() + ' | ' + stage + ' | ' +
-      String(message).replace(/[\\r\\n]+/g, ' ').slice(0, 500) + '\\n');
+      String(message).replace(/[\r\n]+/g, ' ').slice(0, 500) + '\n');
   } catch (_) { /* Logging must never break the updater. */ }
 }
 // A one-time handoff acknowledgement prevents the study GUI from quitting
