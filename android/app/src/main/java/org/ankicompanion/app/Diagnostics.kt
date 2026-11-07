@@ -8,6 +8,8 @@ import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.URL
 import java.time.Instant
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /** Read-only connection tests and the app's own recent sync trace. */
 object Diagnostics {
@@ -23,6 +25,22 @@ object Diagnostics {
                 line("$name: completed in ${System.currentTimeMillis()-start}ms")
             }catch(e:Exception) {
                 line("$name: ${e.javaClass.simpleName}: ${e.message ?: "No details"} (${System.currentTimeMillis()-start}ms)")
+            }
+        }
+        // Provider calls and DNS can hang on a damaged Android installation.
+        // Hard-bound those checks so the report still reaches the clipboard.
+        fun timed(name:String,limitSeconds:Long,work:()->String) {
+            val worker=Executors.newSingleThreadExecutor { task ->
+                Thread(task,"AnkiCompanion-DiagnosticProbe").apply { isDaemon=true }
+            }
+            val future=worker.submit(java.util.concurrent.Callable { work() })
+            try {
+                line("$name: "+future.get(limitSeconds,TimeUnit.SECONDS))
+            }catch(e:Exception) {
+                line("$name: ${e.javaClass.simpleName}: ${e.message ?: "Timed out or unavailable"}")
+            }finally {
+                future.cancel(true)
+                worker.shutdownNow()
             }
         }
         val now=System.currentTimeMillis()
@@ -64,9 +82,9 @@ object Diagnostics {
             }
             val parsed=try { URL(raw) }catch(_:Exception){null}
             if(parsed!=null) {
-                attempt("DNS lookup") {
+                timed("DNS lookup",5) {
                     val resolved=InetAddress.getAllByName(parsed.host)
-                    line("DNS: resolved ${resolved.size} address(es)")
+                    "resolved ${resolved.size} address(es)"
                 }
                 fun request(name:String,path:String,authorized:Boolean) {
                     attempt(name) {
@@ -91,16 +109,14 @@ object Diagnostics {
                 request("Authenticated state /v1/state","/v1/state?device_id=$device&collection_id=$collection",true)
             }
         }
-        attempt("AnkiDroid bridge capabilities") {
+        attempt("AnkiDroid installation") {
             line("AnkiDroid packages installed: ${AnkiBridge.installed(context).joinToString().ifBlank{"none"}}")
             line("Anki access granted: ${AnkiBridge.permitted(context)}")
+        }
+        timed("AnkiDroid bridge capabilities",4) {
             val info=AnkiBridge.capabilities(context)
-            line("Bridge reachable: ${info!=null}")
-            if(info!=null) {
-                line("Reviewer active: ${info.getBoolean("reviewer_active")}")
-                line("Native sync status: ${info.getString("sync_status","unknown")}")
-                line("Native sync enabled: ${info.getBoolean("enabled")}")
-            }
+            if(info==null)"unavailable or permission denied"
+            else "reachable; reviewer_active=${info.getBoolean("reviewer_active")}; native_sync=${info.getString("sync_status","unknown")}; enabled=${info.getBoolean("enabled")}"
         }
         line("---- Recent app sync trace (most recent last) ----")
         val history=store.load("sync-trace.json")?.optJSONArray("events")
