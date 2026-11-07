@@ -11,9 +11,37 @@ let updateWindow = null;
 let studyProcess = null;
 let state = {stage:'idle', message:'Ready to check GitHub', version:app.getVersion(), percent:0};
 let busy = false;
+let downloadRequestedDuringCheck = false;
+
+// Persist short, sanitized update stages for users reporting silent failures.
+function logUpdate(stage, message) {
+  try {
+    const file = path.join(app.getPath('userData'), 'update-diagnostics.log');
+    fs.mkdirSync(path.dirname(file), {recursive:true});
+    if (fs.existsSync(file) && fs.statSync(file).size > 128 * 1024) {
+      fs.renameSync(file, file + '.previous');
+    }
+    fs.appendFileSync(file, new Date().toISOString() + ' | ' + stage + ' | ' +
+      String(message).replace(/[\\r\\n]+/g, ' ').slice(0, 500) + '\\n');
+  } catch (_) { /* Logging must never break the updater. */ }
+}
+// A one-time handoff acknowledgement prevents the study GUI from quitting
+// before the Electron updater window exists on slower Windows systems.
+function acknowledgeUpdateWindow(argv) {
+  const match = argv.find(x => /^--updates-request=[0-9a-f]{32}$/.test(x));
+  if (!match) return;
+  const nonce = match.slice('--updates-request='.length);
+  const marker = path.join(app.getPath('temp'), 'ankicompanion-updates-' + nonce + '.ready');
+  try {
+    fs.writeFileSync(marker, 'ready', {flag:'wx'});
+  } catch (error) {
+    logUpdate('handoff-error', error.message);
+  }
+}
 
 function publish(stage, message, extra = {}) {
   state = { ...state, ...extra, stage, message };
+  logUpdate(stage, message);
   if (updateWindow && !updateWindow.isDestroyed()) {
     updateWindow.webContents.send('updates:state-change', state);
   }
@@ -40,10 +68,11 @@ function startStudy() {
     if (!updateWindow || updateWindow.isDestroyed()) app.quit();
   });
 }
-function showUpdates() {
+function showUpdates(argv = []) {
   if (updateWindow && !updateWindow.isDestroyed()) {
     updateWindow.show();
     updateWindow.focus();
+    acknowledgeUpdateWindow(argv);
     return;
   }
   updateWindow = new BrowserWindow({
@@ -57,7 +86,11 @@ function showUpdates() {
   updateWindow.loadFile(path.join(__dirname,'updates.html'));
   updateWindow.webContents.once('did-finish-load', () => {
     updateWindow?.webContents.send('updates:state-change',state);
-    checkForUpdate().catch(() => {});
+    acknowledgeUpdateWindow(argv);
+    checkForUpdate().catch((error) => publish('error', 'Check failed: ' + error.message));
+  });
+  updateWindow.webContents.on('did-fail-load', (_event, code, description) => {
+    publish('error', 'Updater window failed to load: ' + code + ' ' + description);
   });
   updateWindow.on('closed', () => {
     updateWindow = null;
@@ -99,11 +132,21 @@ async function checkForUpdate() {
     publish('error','GitHub check failed: '+error.message);
   } finally {
     busy = false;
+    // update-available can fire before checkForUpdates() settles. Honor the
+    // pending download instead of silently discarding the button/test action.
+    const shouldDownload = downloadRequestedDuringCheck && state.stage === 'available';
+    downloadRequestedDuringCheck = false;
+    if (shouldDownload) setImmediate(() => downloadUpdate().catch(
+      error => publish('error', 'Queued update download failed: ' + error.message)));
   }
   return state;
 }
 async function downloadUpdate() {
-  if (busy || state.stage !== 'available') return state;
+  if (busy) {
+    if (state.stage === 'available') downloadRequestedDuringCheck = true;
+    return state;
+  }
+  if (state.stage !== 'available') return state;
   busy = true;
   publish('downloading','Downloading update…',{percent:0});
   try {
@@ -142,11 +185,11 @@ if (!single) {
   app.quit();
 } else {
   app.on('second-instance', (_event, argv) => {
-    if (argv.includes('--updates')) showUpdates();
+    if (argv.includes('--updates')) showUpdates(argv);
     else startStudy();
   });
   app.whenReady().then(() => {
-    if (process.argv.includes('--updates')) showUpdates();
+    if (process.argv.includes('--updates')) showUpdates(process.argv);
     else startStudy();
   });
   app.on('window-all-closed', () => { if (!studyProcess) app.quit(); });
