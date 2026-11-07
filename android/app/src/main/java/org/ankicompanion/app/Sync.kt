@@ -31,6 +31,7 @@ object Sync {
         val store=Storage(context);val config=store.connection() ?: return null
         FcmRegistration.ensure(context)
         if(!running.compareAndSet(false,true))return if(requireFresh)null else store.load("state.json")
+        SyncTrace.record(store,"sync_started")
         try {
             // A separate widget process must not read the Anki collection,
             // scan revlog, enumerate decks or launch native sync while the
@@ -41,14 +42,33 @@ object Sync {
                 AnkiBridge.capabilities(context)?.getBoolean("reviewer_active",false)==true
             } catch(_:Exception) { false }
             if(reviewing) {
-                store.setSetting("bridge_status","Studying: native history and scheduling sync deferred until review closes")
-                CompanionWidget.refresh(context)
-                return store.load("state.json")?.let { cached ->
-                    Outbox(context).use { out -> out.overlay(cached) }
+                // Do not touch the native Anki collection during the reviewer.
+                // But DO upload already-durable events and refresh server state:
+                // previously this returned cached state for an entire study session,
+                // leaving hundreds of reviews pending despite a working connection.
+                SyncTrace.record(store,"reviewer_active","Native history deferred; attempting independent server sync")
+                store.setSetting("bridge_status","Studying: native history and scheduling sync deferred; server progress still updating")
+                Outbox(context).use { out ->
+                    val api=Api(config)
+                    SyncTrace.record(store,"reviewer_upload")
+                    out.send(api,store.deviceId,store)
+                    val collection=java.net.URLEncoder.encode(config.optString("collection_id","primary"),"UTF-8")
+                    val device=java.net.URLEncoder.encode(store.deviceId,"UTF-8")
+                    val fresh=api.json("/v1/state?device_id=$device&collection_id=$collection")
+                    store.save("state.json",fresh)
+                    store.setSetting("sync_error","")
+                    SyncTrace.record(store,"reviewer_server_state_ok")
+                    CompanionWidget.refresh(context)
+                    return out.overlay(fresh)
                 }
             }
             val api=Api(config);val outbox=Outbox(context)
             try {
+                // Prioritize uploading the durable queue before any potentially
+                // slow native ContentProvider calls or native collection sync.
+                SyncTrace.record(store,"upload_existing_queue")
+                outbox.send(api,store.deviceId,store)
+                SyncTrace.record(store,"native_bridge_refresh")
                 AnkiBridge.refreshNative(context)
                 val capability=AnkiBridge.capabilities(context)
                 if(capability!=null){
@@ -61,6 +81,7 @@ object Sync {
             }
             catch(e:Exception){store.setSetting("bridge_status","AnkiDroid review-history bridge unavailable; desktop reports phone reviews after collection sync")}
             try {
+                SyncTrace.record(store,"upload_scanned_queue")
                 outbox.send(api,store.deviceId,store)
                 val collectionId=config.optString("collection_id","primary")
                 fun reportNative(applied:Long,ticket:String="") {
@@ -77,6 +98,7 @@ object Sync {
                 }
                 val applied=store.getSetting("native_applied_revision","0").toLongOrNull() ?: 0L
                 reportNative(applied)
+                SyncTrace.record(store,"fetch_server_state")
                 val state=api.json("/v1/state?device_id="+java.net.URLEncoder.encode(store.deviceId,"UTF-8")
                     +"&collection_id="+java.net.URLEncoder.encode(collectionId,"UTF-8"))
                 val lineup=state.getJSONObject("lineup")
@@ -121,11 +143,13 @@ object Sync {
                         +"&collection_id="+java.net.URLEncoder.encode(collectionId,"UTF-8"))
                 } else state
                 store.save("state.json",finalState)
+                SyncTrace.record(store,"sync_succeeded")
                 CompanionWidget.refresh(context)
                 return outbox.overlay(finalState)
             } finally {outbox.close()}
         } catch(e:Exception) {
-            store.setSetting("sync_error",e.message ?: "Offline")
+            SyncTrace.record(store,"sync_failed",e.javaClass.simpleName+": "+(e.message ?: "Offline"))
+            store.setSetting("sync_error",SyncTrace.redact(e.message ?: e.javaClass.simpleName,config))
             CompanionWidget.refresh(context)
             return store.load("state.json")?.let{Outbox(context).use {out->out.overlay(it)}}
         } finally {running.set(false)}
