@@ -33,6 +33,16 @@ object Sync {
         if(!running.compareAndSet(false,true))return if(requireFresh)null else store.load("state.json")
         SyncTrace.record(store,"sync_started")
         try {
+            // Do not let a stalled native provider prevent an already-durable
+            // answer queue from reaching the internet server. If offline,
+            // continue scanning native history to preserve local-first study.
+            SyncTrace.record(store,"upload_existing_queue")
+            try {
+                Outbox(context).use { out -> out.send(Api(config),store.deviceId,store) }
+                SyncTrace.record(store,"early_upload_ok")
+            }catch(e:Exception) {
+                SyncTrace.record(store,"early_upload_failed",e.javaClass.simpleName+": "+(e.message ?: ""))
+            }
             // A separate widget process must not read the Anki collection,
             // scan revlog, enumerate decks or launch native sync while the
             // reviewer is visible. Any ContentProvider collection lock can
@@ -66,8 +76,6 @@ object Sync {
             try {
                 // Prioritize uploading the durable queue before any potentially
                 // slow native ContentProvider calls or native collection sync.
-                SyncTrace.record(store,"upload_existing_queue")
-                outbox.send(api,store.deviceId,store)
                 SyncTrace.record(store,"native_bridge_refresh")
                 AnkiBridge.refreshNative(context)
                 val capability=AnkiBridge.capabilities(context)
