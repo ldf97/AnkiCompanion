@@ -59,18 +59,30 @@ if ($data.StartsWith($root,[StringComparison]::OrdinalIgnoreCase)) {
 }
 # Exercise the packaged update-shell launcher. A public release may not offer
 # a newer version yet; this smoke verifies the installed Electron process starts.
-$updater=Start-Process $launcher -ArgumentList '--updates' -PassThru
+$nonce=[Guid]::NewGuid().ToString('N').ToLowerInvariant()
+$ack=Join-Path $env:TEMP "ankicompanion-updates-$nonce.ready"
+$updater=Start-Process $launcher -ArgumentList @('--updates',"--updates-request=$nonce") -PassThru
 try {
-  Start-Sleep -Seconds 7
+  $ready=$false
+  for($i=0;$i -lt 40;$i++){
+    if((Test-Path $ack) -and ((Get-Content $ack -Raw).Trim() -eq 'ready')) {
+      $ready=$true
+      break
+    }
+    if($updater.HasExited){break}
+    Start-Sleep -Milliseconds 250
+  }
+  if (-not $ready) { throw 'Electron updater failed to acknowledge its visible window' }
   if ($updater.HasExited) { throw "Installed Electron updater exited early: $($updater.ExitCode)" }
 } finally {
+  Remove-Item $ack -ErrorAction SilentlyContinue
   Stop-Process -Id $updater.Id -ErrorAction SilentlyContinue
 }
 New-Item -ItemType Directory -Force 'test-results/update-buttons/windows' | Out-Null
 @{ electron_updater_packaged=$true; nsis_installed=$true;
    latest_yml_sha512_verified=$true; bundled_qt=$true; bundled_server=$true;
    bundled_addon=$true; installer=(Split-Path $installer -Leaf);
-   update_shell_started=$true } |
+   update_shell_started=$true; update_window_handshake=$true } |
     ConvertTo-Json -Depth 4 | Set-Content 'test-results/update-buttons/windows/electron-evidence.json' -Encoding utf8
 Write-Host 'PASS: Installed Electron/NSIS updater and bundled Python components'
 
@@ -119,7 +131,11 @@ try {
     if($newVersion){break}
     Start-Sleep -Seconds 1
   }
-  if(-not $newVersion){throw 'Electron updater did not apply NSIS v0.1.2 over v0.1.1'}
+  if(-not $newVersion){
+    $log=Join-Path $env:APPDATA 'AnkiCompanion/update-diagnostics.log'
+    if(Test-Path $log) { Write-Host '----- Electron updater diagnostics -----'; Get-Content $log -Tail 60 }
+    throw 'Electron updater did not apply NSIS v0.1.2 over v0.1.1'
+  }
   Write-Host 'PASS: Electron updater downloaded latest.yml and installed real NSIS v0.1.2 over v0.1.1'
   @{v1='0.1.1';v2='0.1.2';actual_nsis_in_place_upgrade=$true;
     via_electron_updater=$true;no_reinstall=$true} |
