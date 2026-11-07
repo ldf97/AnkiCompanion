@@ -54,9 +54,16 @@ def test_companion_widget_never_contends_with_active_reviewer_collection():
     sync=(ROOT/'android'/'app'/'src'/'main'/'java'/'org'/'ankicompanion'/'app'/'Sync.kt').read_text()
     assert 'putBoolean("reviewer_active", visibleReviewers.get() > 0)' in integration
     assert 'getBoolean("reviewer_active",false)==true' in sync
-    # Stop before revlog / decks / native sync: the separate app may never
-    # acquire the Anki collection lock while card buttons are active.
-    assert sync.index('if(reviewing) {') < sync.index('AnkiBridge.refreshNative(context)')
-    assert sync.index('return store.load("state.json")?.let { cached ->') < sync.index('outbox.scan(')
+    # Never acquire native revlog / decks / sync locks while reviewing,
+    # but do upload durable queued events and refresh the server cache.
+    reviewer_start=sync.index('if(reviewing) {')
+    reviewer_end=sync.index('return out.overlay(fresh)')
+    assert reviewer_start < reviewer_end < sync.index('outbox.scan(')
+    reviewer_branch=sync[reviewer_start:reviewer_end]
+    assert 'out.send(api,store.deviceId,store)' in reviewer_branch
+    assert 'api.json("/v1/state?device_id=' in reviewer_branch
+    assert 'AnkiBridge.history(' not in reviewer_branch
+    assert 'AnkiBridge.synchronize(' not in reviewer_branch
+    assert 'AnkiBridge.refreshNative(' not in reviewer_branch
     assert 'AnkiBridge.synchronize(context)' in sync
     assert 'if (requested.get()) requestSync()' in integration
