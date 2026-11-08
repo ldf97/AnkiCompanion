@@ -252,13 +252,21 @@ jobs:
           pattern: signed-*
           merge-multiple: true
           path: candidate
-      - name: Hash exact candidate files
+      - name: Hash exact candidate files and reject Android downgrade
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_BUILD: ${{ inputs.build }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           git archive --format=zip --output=candidate/AnkiCompanion-source.zip HEAD
           python scripts/release_manifest.py --directory candidate --version "$RELEASE_VERSION" --build "$RELEASE_BUILD" --commit "$GITHUB_SHA"
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
+          mkdir -p previous-release
+          gh release download "$latest" --repo "$GITHUB_REPOSITORY" \
+            --pattern update.json --dir previous-release --clobber
+          python scripts/release_build_codes.py verify \
+            --previous previous-release/update.json --candidate candidate/update.json
       - uses: actions/upload-artifact@v4
         with:
           name: signed-release-candidate
